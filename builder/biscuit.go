@@ -3,6 +3,7 @@ package builder
 import (
 	"biscuit-wasm-go/biscuit"
 	"biscuit-wasm-go/keypair"
+	"biscuit-wasm-go/shared"
 	"biscuit-wasm-go/wasm"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,14 @@ import (
 type BiscuitBuilder struct {
 	env wasm.WasmEnv
 	ptr uint64
+}
+
+func (builder BiscuitBuilder) Ptr() uint64 {
+	return builder.ptr
+}
+
+func (builder BiscuitBuilder) ToStringWasmFunction() string {
+	return "biscuitbuilder_toString"
 }
 
 // New creates a new BiscuitBuilder using a Wasm environment.
@@ -111,25 +120,8 @@ func (builder BiscuitBuilder) SetRootKeyId(keyId uint64) error {
 // ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.
 func (builder BiscuitBuilder) ToString() (string, error) {
 	if builder.ptr == 0 {
-		return "", fmt.Errorf("public key not initialized")
+		return "", fmt.Errorf("biscuit builder not initialized")
 	}
 
-	function, err := builder.env.GetFunction("biscuitbuilder_toString")
-	if err != nil {
-		return "", err
-	}
-
-	resultPtr, err := builder.env.GetStringArea()
-	if err != nil {
-		return "", err
-	}
-	defer builder.env.Free(resultPtr, wasm.StringAreaSize)
-
-	_, err = builder.env.Call(function, resultPtr, builder.ptr)
-	if err != nil {
-		slog.Error("biscuitbuilder_toString failed", slog.Any("err", err))
-		return "", err
-	}
-
-	return builder.env.GetStringValueFromPointer(resultPtr)
+	return shared.AsString(builder.env, builder)
 }

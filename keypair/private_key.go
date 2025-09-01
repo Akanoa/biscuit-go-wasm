@@ -1,52 +1,42 @@
 package keypair
 
 import (
+	"biscuit-wasm-go/shared"
 	"biscuit-wasm-go/wasm"
 	"fmt"
-	"log/slog"
 )
 
+// PrivateKey represents a WASM private key.
 type PrivateKey struct {
 	env wasm.WasmEnv
 	ptr uint64
 }
 
+// ToStringWasmFunction returns the name of the WASM function that converts the PublicKey to its string representation.
+func (private_key PrivateKey) ToStringWasmFunction() string {
+	return "privatekey_toString"
+}
+
+// Ptr returns the pointer to the underlying WASM object.
 func (private_key PrivateKey) Ptr() uint64 {
 	return private_key.ptr
 }
 
+// New creates a new PrivateKey using the linked Wasm environment.
 func (private_key PrivateKey) New(env wasm.WasmEnv) PrivateKey {
 	return PrivateKey{env: env, ptr: 0}
 }
 
-func (self PrivateKey) ToString() (string, error) {
-	if self.ptr == 0 {
-		slog.Error("private key not initialized")
-		return "", fmt.Errorf("private key not initialized")
+// ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.
+func (private_key PrivateKey) ToString() (string, error) {
+	if private_key.ptr == 0 {
+		return "", fmt.Errorf("biscuit private_key not initialized")
 	}
 
-	function, err := self.env.GetFunction("privatekey_toString")
-	if err != nil {
-		slog.Error("exported function 'privatekey_toString' not found")
-		return "", err
-	}
-
-	resultPtr, err := self.env.GetStringArea()
-	if err != nil {
-		slog.Error("malloc failed", slog.Any("err", err))
-		return "", err
-	}
-	defer self.env.Free(resultPtr, wasm.StringAreaSize)
-
-	_, err = self.env.Call(function, resultPtr, self.ptr)
-	if err != nil {
-		slog.Error("privatekey_toString failed", slog.Any("err", err))
-		return "", err
-	}
-
-	return self.env.GetStringValueFromPointer(resultPtr)
+	return shared.AsString(private_key.env, private_key)
 }
 
+// FromString converts the string representation of a PrivateKey to a PrivateKey using the linked Wasm environment. Returns an error.
 func (self *PrivateKey) FromString(data string) error {
 	// Note: Go strings are UTF-8 already. We must copy bytes into WASM memory
 	// and pass (ptr, len) according to wasm-bindgen ABI.

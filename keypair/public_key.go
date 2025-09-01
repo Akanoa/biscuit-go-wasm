@@ -1,14 +1,26 @@
 package keypair
 
 import (
+	"biscuit-wasm-go/shared"
 	"biscuit-wasm-go/wasm"
 	"fmt"
 	"log/slog"
 )
 
+// PublicKey represents a WASM public key.
 type PublicKey struct {
 	env wasm.WasmEnv
 	ptr uint64
+}
+
+// ToStringWasmFunction returns the name of the WASM function that converts the PublicKey to its string representation.
+func (publicKey PublicKey) ToStringWasmFunction() string {
+	return "publickey_toString"
+}
+
+// Ptr returns the pointer to the underlying WASM object.
+func (public_key PublicKey) Ptr() uint64 {
+	return public_key.ptr
 }
 
 // FromString initializes a PublicKey from a string and a given SignatureAlgorithm using a Wasm environment.
@@ -46,27 +58,10 @@ func (publicKey PublicKey) FromString(env wasm.WasmEnv, data string, algorithm S
 }
 
 // ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.
-func (publicKey PublicKey) ToString() (string, error) {
-	if publicKey.ptr == 0 {
-		return "", fmt.Errorf("public key not initialized")
+func (publick_key PublicKey) ToString() (string, error) {
+	if publick_key.ptr == 0 {
+		return "", fmt.Errorf("biscuit publick_key not initialized")
 	}
 
-	function, err := publicKey.env.GetFunction("public_key_ToString")
-	if err != nil {
-		return "", err
-	}
-
-	resultPtr, err := publicKey.env.GetStringArea()
-	if err != nil {
-		return "", err
-	}
-	defer publicKey.env.Free(resultPtr, wasm.StringAreaSize)
-
-	_, err = publicKey.env.Call(function, resultPtr, publicKey.ptr)
-	if err != nil {
-		slog.Error("public_key_ToString failed", slog.Any("err", err))
-		return "", err
-	}
-
-	return publicKey.env.GetStringValueFromPointer(resultPtr)
+	return shared.AsString(publick_key.env, publick_key)
 }

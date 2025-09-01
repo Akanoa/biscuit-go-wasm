@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"biscuit-wasm-go/shared"
 	"biscuit-wasm-go/wasm"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,14 @@ import (
 type BlockBuilder struct {
 	env wasm.WasmEnv
 	ptr uint64
+}
+
+func (builder BlockBuilder) Ptr() uint64 {
+	return builder.ptr
+}
+
+func (builder BlockBuilder) ToStringWasmFunction() string {
+	return "blockbuilder_toString"
 }
 
 // New creates a new BlockBuilder using a Wasm environment.
@@ -58,4 +67,13 @@ func (block *BlockBuilder) AddCode(code string) error {
 		return fmt.Errorf("blockbuilder_addCode failed: %w", err)
 	}
 	return nil
+}
+
+// ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.
+func (builder BlockBuilder) ToString() (string, error) {
+	if builder.ptr == 0 {
+		return "", fmt.Errorf("blockbuilder not initialized")
+	}
+
+	return shared.AsString(builder.env, builder)
 }

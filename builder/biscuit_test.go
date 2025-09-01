@@ -43,10 +43,16 @@ func TestBiscuitBuilder_Build(t *testing.T) {
 	}
 	t.Log(str)
 
-	_, err = biscuitBuilder.Build(privatekey)
+	biscuit, err := biscuitBuilder.Build(privatekey)
 	if err != nil {
 		t.Error(err)
 		return
 	}
+
+	bisuitBase64, err := biscuit.ToBase64()
+	if err != nil {
+		t.Error(err)
+	}
+	t.Log(bisuitBase64)
 
 }

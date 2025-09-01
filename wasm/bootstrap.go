@@ -1,3 +1,6 @@
+// Package wasm contains host-side bootstrap for the wazero runtime. It auto-instantiates
+// minimal host functions to satisfy imports produced by wasm-bindgen glue, so the
+// compiled module can run without a JavaScript environment.
 package wasm
 
 import (
@@ -24,17 +27,18 @@ var ExternrefTableMirror []any
 
 // synthetic handles for JS-like singletons and typed arrays
 var (
-		globalObjHandle      uint32
-		cryptoObjHandle      uint32
-		memoryObjHandle      uint32
-		bufferObjHandle      uint32
-		functionNoArgsHandle uint32
-		// Start synthetic typed array handles in a high range to avoid colliding with wasm memory pointers
-		taHandleNext uint32 = 0x80000000
-		// taBuf stores JS-allocated typed array contents (not backed by wasm memory)
-		taBuf = map[uint32][]byte{}
-	)
+	globalObjHandle      uint32
+	cryptoObjHandle      uint32
+	memoryObjHandle      uint32
+	bufferObjHandle      uint32
+	functionNoArgsHandle uint32
+	// Start synthetic typed array handles in a high range to avoid colliding with wasm memory pointers
+	taHandleNext uint32 = 0x80000000
+	// taBuf stores JS-allocated typed array contents (not backed by wasm memory)
+	taBuf = map[uint32][]byte{}
+)
 
+// JsNull is a sentinel type used to mirror JavaScript's `null` in the externref table.
 type JsNull struct{}
 
 // InstantiateImportStubs inspects the compiled module and creates host modules for each imported module,
@@ -107,7 +111,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		case "__wbg_randomFillSync_ac0988aba3254290", "__wbg_getRandomValues_b8f5dbd5f3995a9e":
 			// Signature in this wasm-bindgen glue: (param i32 i32) -> () where params are (obj_handle, typed_array_handle)
 			// We synthesize typed array handles equal to byte offsets into wasm memory and track their lengths.
-   fn := api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
+			fn := api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
 				mem := m.Memory()
 				_ = api.DecodeU32(stack[0]) // obj_handle not needed
 				arr := api.DecodeU32(stack[1])
@@ -300,7 +304,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 					if len(ExternrefTableMirror) == 0 {
 						ExternrefTableMirror = append(ExternrefTableMirror, nil)
 					}
-					fmt.Println("was here json_parse")
+					// Store parsed JSON as string in externref mirror (minimal implementation).
 					ExternrefTableMirror = append(ExternrefTableMirror, string(buf))
 					stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
 				} else {
@@ -344,7 +348,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				if len(ExternrefTableMirror) == 0 {
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
-				fmt.Println("was here 1")
+				// Create and store a new empty array in the externref mirror.
 				ExternrefTableMirror = append(ExternrefTableMirror, []any{})
 				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
 			}), params, results).Export(name)
@@ -444,7 +448,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			}), params, results).Export(name)
 		case "__wbg_subarray_aa9065fa9dc5df96":
 			// (param i32 i32 i32) (result i32): return a new handle = base+begin and record length = end-begin
-   builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				base := api.DecodeU32(stack[0])
 				begin := api.DecodeU32(stack[1])
 				end := api.DecodeU32(stack[2])
@@ -456,9 +460,15 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				if buf, ok := taBuf[base]; ok {
 					start := int(begin)
 					stop := int(end)
-					if start < 0 { start = 0 }
-					if stop > len(buf) { stop = len(buf) }
-					if stop < start { stop = start }
+					if start < 0 {
+						start = 0
+					}
+					if stop > len(buf) {
+						stop = len(buf)
+					}
+					if stop < start {
+						stop = start
+					}
 					h := taHandleNext
 					taHandleNext++
 					taBuf[h] = buf[start:stop]
@@ -529,7 +539,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				}
 				stack[0] = api.EncodeU32(bufferObjHandle)
 			}), params, results).Export(name)
-		case "__wbg_new_a12002a7f91c75be", "__wbg_new_405e22f390576ce2":
+		case "__wbg_new_a12002a7f91c75be", "__wbg_new_405e22f390576ce2", "__wbg_new_78feb108b6472713":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				if len(ExternrefTableMirror) == 0 {
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
@@ -537,7 +547,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{})
 				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
 			}), params, results).Export(name)
-		case "__wbg_set_3f1d0b984ed272ed":
+		case "__wbg_set_3f1d0b984ed272ed", "__wbg_set_37837023f3d740e8":
 			// Reflect.set(target, key, value) -> bool
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				target := api.DecodeU32(stack[0])
@@ -591,7 +601,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			// We avoid special-casing stub names; any unrecognized import gets a no-op implementation.
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				// By default, do nothing. Wazero pre-zeros the stack slots for results, so this acts as a safe passthrough.
-				println("passthrough", name)
+				// Intentionally no logging here to keep library output clean.
 				_ = stack
 			}), params, results).Export(name)
 		}

@@ -1,9 +1,9 @@
 package builder
 
 import (
-	"biscuit-wasm-go/biscuit"
 	"biscuit-wasm-go/keypair"
 	"biscuit-wasm-go/shared"
+	"biscuit-wasm-go/token"
 	"biscuit-wasm-go/wasm"
 	"fmt"
 	"log/slog"
@@ -43,14 +43,14 @@ func (builder BiscuitBuilder) New(env wasm.WasmEnv) (BiscuitBuilder, error) {
 }
 
 // Build builds the Biscuit using the provided private key.
-func (builder *BiscuitBuilder) Build(privateKey keypair.PrivateKey) (biscuit.Biscuit, error) {
+func (builder *BiscuitBuilder) Build(privateKey keypair.PrivateKey) (token.Biscuit, error) {
 	if builder.ptr == 0 {
-		return biscuit.Biscuit{}, fmt.Errorf("builder not initialized")
+		return token.Biscuit{}, fmt.Errorf("builder not initialized")
 	}
 
 	function, err := builder.env.GetFunction("biscuitbuilder_build")
 	if err != nil {
-		return biscuit.Biscuit{}, err
+		return token.Biscuit{}, err
 	}
 
 	returnPtr, err := builder.env.GetReturnArea()
@@ -59,16 +59,16 @@ func (builder *BiscuitBuilder) Build(privateKey keypair.PrivateKey) (biscuit.Bis
 	_, err = builder.env.Call(function, returnPtr, builder.ptr, privateKey.Ptr())
 	if err != nil {
 		slog.Error("biscuitbuilder_build failed", slog.Any("err", err))
-		return biscuit.Biscuit{}, err
+		return token.Biscuit{}, err
 	}
 
 	valuePtr, err := builder.env.GetPointee(returnPtr)
 	if err != nil {
 		slog.Error("biscuitbuilder_build failed, unable to get return value", slog.Any("err", err))
-		return biscuit.Biscuit{}, err
+		return token.Biscuit{}, err
 	}
 
-	return biscuit.Biscuit{}.New(builder.env, valuePtr), nil
+	return token.Biscuit{}.New(builder.env, valuePtr), nil
 }
 
 // AddCode adds the provided code to the BiscuitBuilder.
@@ -120,7 +120,7 @@ func (builder BiscuitBuilder) SetRootKeyId(keyId uint64) error {
 // ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.
 func (builder BiscuitBuilder) ToString() (string, error) {
 	if builder.ptr == 0 {
-		return "", fmt.Errorf("biscuit builder not initialized")
+		return "", fmt.Errorf("token builder not initialized")
 	}
 
 	return shared.AsString(builder.env, builder)

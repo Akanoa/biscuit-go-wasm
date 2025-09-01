@@ -1,3 +1,4 @@
+// Package shared contains cross-package helpers for interacting with the WASM boundary.
 package shared
 
 import (
@@ -5,6 +6,8 @@ import (
 	"log/slog"
 )
 
+// AsString calls a wasm export corresponding to value.ToStringWasmFunction() and
+// decodes the (ptr,len) result as a Go string. The value must provide a valid Ptr().
 func AsString(env wasm.WasmEnv, value Stringable) (string, error) {
 
 	wasmFunction := value.ToStringWasmFunction()

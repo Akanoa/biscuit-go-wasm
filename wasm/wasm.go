@@ -1,3 +1,7 @@
+// Package wasm provides a thin Go wrapper around a wasm-bindgen compiled WebAssembly module
+// used by this repository. It offers helpers to instantiate the module with wazero,
+// manage guest memory, pass strings safely, and decode the common (ptr,len) and
+// return-area patterns used by the Rust/WASM boundary.
 package wasm
 
 import (
@@ -16,6 +20,9 @@ import (
 
 const defaultWasmRelPath = "target/wasm32-unknown-unknown/release/biscuit_wasm_go.wasm"
 
+// WasmEnv wraps a wazero Module and its context, exposing convenience methods to
+// find exports and call them, and to manage the common memory patterns used by
+// wasm-bindgen generated interfaces.
 type WasmEnv struct {
 	Ctx    context.Context
 	Module api.Module
@@ -55,6 +62,8 @@ func CloseWasmModule(module api.Module, goContext context.Context) {
 	}
 }
 
+// InitWasm loads, compiles and instantiates the Biscuit WASM module using wazero.
+// It also installs host import stubs so the module can run without a JS host.
 func InitWasm() (WasmEnv, error) {
 	ctx := context.Background()
 	// Create a new runtime
@@ -181,20 +190,74 @@ func (env WasmEnv) GetStringValueFromPointer(ptr uint64) (string, error) {
 	return stringData, nil
 }
 
-// GetError retrieves an error message from ExternrefTableMirror by index.
-// Returns the error message as a string or an error if the type is unknown.
+// GetError retrieves the error associated with a given externref index from the ExternrefTableMirror.
+// It returns a string representation of the error or an empty string if the error cannot be resolved.
+// An error is returned if the provided index is invalid.
 func (env WasmEnv) GetError(idx uint64) (string, error) {
-	switch data := ExternrefTableMirror[idx].(type) {
-	default:
-		return "", fmt.Errorf("unknown error type")
+	if int(idx) >= len(ExternrefTableMirror) {
+		return "", fmt.Errorf("unknown error: invalid externref index %d", idx)
+	}
+
+	v := ExternrefTableMirror[idx]
+	switch data := v.(type) {
+	case nil:
+		return "unknown error", nil
 	case string:
 		return data, nil
-	case map[string]interface{}:
-		ret := ""
-		for key, value := range data {
-			ret += fmt.Sprintf("%s: %v", key, value)
+	case map[string]any:
+		// Prefer a stable, human-friendly serialization without Go's map[...] prefix
+		// Common shape from wasm-bindgen is { "InvalidByte": {} } or similar.
+		// If the map contains a single key with empty object, render just the key name.
+		if len(data) == 1 {
+			for k, inner := range data {
+				// If inner is an empty map or struct, print only the key
+				empty := false
+				switch iv := inner.(type) {
+				case map[string]any:
+					empty = len(iv) == 0
+				case map[any]any:
+					empty = len(iv) == 0
+				default:
+					empty = fmt.Sprintf("%v", iv) == "map[]"
+				}
+				if empty {
+					return k, nil
+				}
+				return fmt.Sprintf("%s: %v", k, inner), nil
+			}
 		}
-		return ret, nil
+		// Fallback: stable order by keys
+		keys := make([]string, 0, len(data))
+		for k := range data {
+			keys = append(keys, k)
+		}
+		// simple insertion sort to avoid importing sort
+		// NOTE:
+		// - Chosen to keep zero extra dependencies (no "sort" import) and preserve
+		//   predictable behavior in constrained environments (WASM/embedded).
+		// - O(n^2) complexity is acceptable here since the number of error keys is small.
+		// - Ascending lexicographic order ensures deterministic, stable error message
+		//   serialization across runs and platforms.
+		for i := 1; i < len(keys); i++ {
+			for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
+				keys[j-1], keys[j] = keys[j], keys[j-1]
+			}
+		}
+		// Build a human-readable representation: "k1: v1, k2: v2, ..."
+		// Goals:
+		// - Provide a stable, human-friendly concatenation of sorted key/value pairs.
+		// - Avoid Go-specific map formatting artifacts (e.g., map[...]).
+		out := ""
+		for i, k := range keys {
+			if i > 0 {
+				out += ", "
+			}
+			out += fmt.Sprintf("%s: %v", k, data[k])
+		}
+
+		return out, nil
+	default:
+		return fmt.Sprintf("%v", v), nil
 	}
 }
 

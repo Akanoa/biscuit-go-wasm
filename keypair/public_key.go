@@ -1,3 +1,5 @@
+// Package keypair provides types and helpers to work with public/private keys
+// for Biscuit, bridging Go calls to the underlying WebAssembly functions.
 package keypair
 
 import (
@@ -60,7 +62,7 @@ func (publicKey PublicKey) FromString(env wasm.WasmEnv, data string, algorithm S
 // ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.
 func (publick_key PublicKey) ToString() (string, error) {
 	if publick_key.ptr == 0 {
-		return "", fmt.Errorf("biscuit publick_key not initialized")
+		return "", fmt.Errorf("token publick_key not initialized")
 	}
 
 	return shared.AsString(publick_key.env, publick_key)

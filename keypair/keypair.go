@@ -1,3 +1,5 @@
+// Package keypair provides high-level wrappers for key pair creation and access
+// backed by the Biscuit WebAssembly module.
 package keypair
 
 import (

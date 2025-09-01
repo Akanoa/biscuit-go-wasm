@@ -30,7 +30,7 @@ func (private_key PrivateKey) New(env wasm.WasmEnv) PrivateKey {
 // ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.
 func (private_key PrivateKey) ToString() (string, error) {
 	if private_key.ptr == 0 {
-		return "", fmt.Errorf("biscuit private_key not initialized")
+		return "", fmt.Errorf("token private_key not initialized")
 	}
 
 	return shared.AsString(private_key.env, private_key)

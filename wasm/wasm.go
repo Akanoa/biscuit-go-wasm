@@ -9,12 +9,11 @@ import (
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+
+	"biscuit-wasm-go/utils"
 )
 
-var wasmCandidates = []string{
-	"target/wasm32-unknown-unknown/release/biscuit_wasm_go.wasm",
-	"target/wasm32-unknown-unknown/debug/biscuit_wasm_go.wasm",
-}
+const defaultWasmRelPath = "target/wasm32-unknown-unknown/release/biscuit_wasm_go.wasm"
 
 type WasmEnv struct {
 	Ctx    context.Context
@@ -61,41 +60,41 @@ func InitWasm() (WasmEnv, error) {
 	runtime := wazero.NewRuntime(ctx)
 
 	var sourceWasm []byte
-	var chosen string
 	var err error
-	for _, candidate := range wasmCandidates {
-		sourceWasm, err = os.ReadFile(candidate)
-		if err == nil {
-			chosen = candidate
-			break
-		}
+
+	// Resolve path dynamically
+	path, err := utils.ResolveAssetFile(defaultWasmRelPath)
+	if err != nil {
+		slog.Error("Unable to resolve wasm file", slog.Any("err", err))
+		return WasmEnv{}, err
 	}
-	if chosen == "" {
-		slog.Error("Unable to read wasm file from candidates", slog.Any("candidates", wasmCandidates), slog.Any("lastErr", err))
-		panic(nil)
+
+	sourceWasm, err = os.ReadFile(path)
+	if err != nil {
+		slog.Error("Unable to read wasm file", slog.String("file", path), slog.Any("err", err))
+		return WasmEnv{}, err
 	}
 
 	// Compile module
 	compiled, err := runtime.CompileModule(ctx, sourceWasm)
 	if err != nil {
-		slog.Error("Unable to compile wasm file", slog.String("file", chosen), slog.Any("err", err))
-		panic(nil)
+		slog.Error("Unable to compile wasm file", slog.String("file", path), slog.Any("err", err))
+		return WasmEnv{}, err
 	}
 
 	// Auto-instantiate host stubs for any imported functions (e.g., from "__wbindgen_placeholder__").
 	if err := InstantiateImportStubs(ctx, runtime, compiled); err != nil {
 		slog.Error("Unable to instantiate import stubs", slog.Any("err", err))
-		panic(nil)
+		return WasmEnv{}, err
 	}
 
 	// Use default module config so the module's start function (if any) runs.
 	wasmConfig := wazero.NewModuleConfig()
 
 	module, err := runtime.InstantiateModule(ctx, compiled, wasmConfig)
-
 	if err != nil {
 		slog.Error("Unable to instantiate module", slog.Any("err", err))
-		panic(nil)
+		return WasmEnv{}, err
 	}
 
 	return WasmEnv{

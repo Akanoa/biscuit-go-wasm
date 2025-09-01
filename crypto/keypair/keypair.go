@@ -18,18 +18,13 @@ type KeyPair struct {
 	ptr uint64
 }
 
-func Invoke(env wasm.WasmEnv) *KeyPair {
-	KeyPair := &KeyPair{env: env, ptr: 0}
-	return KeyPair
-}
-
-func (self *KeyPair) New(signatureAlgorithm SignatureAlgorithm) error {
-	function, err := self.env.GetFunction("keypair_new")
+func (keypair *KeyPair) New(env wasm.WasmEnv, signatureAlgorithm SignatureAlgorithm) error {
+	function, err := env.GetFunction("keypair_new")
 	if err != nil {
 		return err
 	}
 
-	result, err := self.env.Call(function, uint64(signatureAlgorithm))
+	result, err := env.Call(function, uint64(signatureAlgorithm))
 	if err != nil {
 		return fmt.Errorf("keypair_new failed: %w", err)
 	}
@@ -38,25 +33,26 @@ func (self *KeyPair) New(signatureAlgorithm SignatureAlgorithm) error {
 		return fmt.Errorf("no result returned from keypair_new")
 	}
 
-	self.ptr = result[0]
+	keypair.ptr = result[0]
+	keypair.env = env
 
 	return nil
 }
 
-func (self *KeyPair) GetPublicKey() (PublicKey, error) {
+func (keypair *KeyPair) GetPublicKey() (PublicKey, error) {
 
-	if self.ptr == 0 {
+	if keypair.ptr == 0 {
 		slog.Error("keypair not initialized")
 		return PublicKey{}, fmt.Errorf("keypair not initialized")
 	}
 
-	function, err := self.env.GetFunction("keypair_getPublicKey")
+	function, err := keypair.env.GetFunction("keypair_getPublicKey")
 	if function != nil {
 		slog.Error("exported function 'keypair_getPublicKey' not found")
 		return PublicKey{}, err
 	}
 
-	result, err := self.env.Call(function, self.ptr)
+	result, err := keypair.env.Call(function, keypair.ptr)
 	if err != nil {
 		slog.Error("keypair_getPublicKey failed", slog.Any("err", err))
 		return PublicKey{}, err
@@ -64,23 +60,23 @@ func (self *KeyPair) GetPublicKey() (PublicKey, error) {
 
 	return PublicKey{
 		ptr: result[0],
-		env: self.env,
+		env: keypair.env,
 	}, nil
 }
 
-func (self *KeyPair) GetPrivateKey() (PrivateKey, error) {
+func (keypair *KeyPair) GetPrivateKey() (PrivateKey, error) {
 
-	if self.ptr == 0 {
+	if keypair.ptr == 0 {
 		return PrivateKey{}, fmt.Errorf("keypair not initialized")
 	}
 
-	function, err := self.env.GetFunction("keypair_getPrivateKey")
+	function, err := keypair.env.GetFunction("keypair_getPrivateKey")
 	if err != nil {
 		slog.Error("exported function 'keypair_getPrivateKey' not found")
 		return PrivateKey{}, err
 	}
 
-	result, err := self.env.Call(function, self.ptr)
+	result, err := keypair.env.Call(function, keypair.ptr)
 	if err != nil {
 		slog.Error("keypair_getPrivateKey failed", slog.Any("err", err))
 		return PrivateKey{}, err
@@ -88,19 +84,19 @@ func (self *KeyPair) GetPrivateKey() (PrivateKey, error) {
 
 	return PrivateKey{
 		ptr: result[0],
-		env: self.env,
+		env: keypair.env,
 	}, nil
 }
 
-func (self *KeyPair) FromPrivateKey(privateKey PrivateKey) error {
+func (keypair *KeyPair) FromPrivateKey(privateKey PrivateKey) error {
 
-	function, err := self.env.GetFunction("keypair_fromPrivateKey")
+	function, err := keypair.env.GetFunction("keypair_fromPrivateKey")
 	if err != nil {
 		slog.Error("exported function 'keypair_fromPrivateKey' not found")
 		return err
 	}
 
-	result, err := self.env.Call(function, privateKey.ptr)
+	result, err := keypair.env.Call(function, privateKey.ptr)
 
 	if err != nil {
 		slog.Error("keypair_fromPrivateKey failed", slog.Any("err", err))
@@ -111,7 +107,7 @@ func (self *KeyPair) FromPrivateKey(privateKey PrivateKey) error {
 		return fmt.Errorf("no result returned from keypair_fromPrivateKey")
 	}
 
-	self.ptr = result[0]
+	keypair.ptr = result[0]
 
 	return nil
 }

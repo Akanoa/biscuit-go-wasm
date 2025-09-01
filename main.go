@@ -8,24 +8,23 @@ import (
 	"os"
 )
 
-func createkeypair(env wasm.WasmEnv, algorithm keypairModule.SignatureAlgorithm) (*keypairModule.KeyPair, error) {
-	keypair := keypairModule.Invoke(env)
-
-	if err := keypair.New(algorithm); err != nil {
+func createkeypair(env wasm.WasmEnv, algorithm keypairModule.SignatureAlgorithm) (keypairModule.KeyPair, error) {
+	keypair := keypairModule.KeyPair{}
+	if err := keypair.New(env, algorithm); err != nil {
 		slog.Error(err.Error())
-		return nil, err
+		return keypair, err
 	}
 
 	privateKey, err := keypair.GetPrivateKey()
 	if err != nil {
 		slog.Error(err.Error())
-		return nil, err
+		return keypair, err
 	}
 
 	privateKeyString, err := privateKey.ToString()
 	if err != nil {
 		slog.Error(err.Error())
-		return nil, err
+		return keypair, err
 	}
 	fmt.Printf("PrivateKeyString %s\n", privateKeyString)
 

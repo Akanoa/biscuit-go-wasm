@@ -11,6 +11,10 @@ type PrivateKey struct {
 	ptr uint64
 }
 
+func (private_key PrivateKey) Ptr() uint64 {
+	return private_key.ptr
+}
+
 func (private_key PrivateKey) New(env wasm.WasmEnv) PrivateKey {
 	return PrivateKey{env: env, ptr: 0}
 }

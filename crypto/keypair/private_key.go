@@ -17,10 +17,6 @@ func (private_key PrivateKey) New(env wasm.WasmEnv) PrivateKey {
 	return PrivateKey{env: env, ptr: 0}
 }
 
-func InvokePrivateKey(env wasm.WasmEnv) PrivateKey {
-	return PrivateKey{env: env, ptr: 0}
-}
-
 func (self PrivateKey) ToString() (string, error) {
 	if self.ptr == 0 {
 		slog.Error("private key not initialized")

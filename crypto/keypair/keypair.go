@@ -49,7 +49,7 @@ func (keypair *KeyPair) GetPublicKey() (PublicKey, error) {
 	}
 
 	function, err := keypair.env.GetFunction("keypair_getPublicKey")
-	if function != nil {
+	if err != nil {
 		slog.Error("exported function 'keypair_getPublicKey' not found")
 		return PublicKey{}, err
 	}

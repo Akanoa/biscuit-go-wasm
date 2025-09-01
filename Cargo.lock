@@ -118,7 +118,7 @@ name = "biscuit-wasm-go"
 version = "0.1.0"
 dependencies = [
  "biscuit-wasm",
- "zeroize",
+ "wasm-bindgen",
 ]
 
 [[package]]

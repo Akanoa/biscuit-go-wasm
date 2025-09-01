@@ -3,6 +3,7 @@ package wasm
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -180,6 +181,8 @@ func (env WasmEnv) GetStringValueFromPointer(ptr uint64) (string, error) {
 	return stringData, nil
 }
 
+// GetError retrieves an error message from ExternrefTableMirror by index.
+// Returns the error message as a string or an error if the type is unknown.
 func (env WasmEnv) GetError(idx uint64) (string, error) {
 	switch data := ExternrefTableMirror[idx].(type) {
 	default:
@@ -193,4 +196,82 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 		}
 		return ret, nil
 	}
+}
+
+// WriteString writes a UTF-8 encoded string to the WebAssembly module's memory and returns a pointer to its location.
+func (env WasmEnv) WriteString(data string) (uint64, error) {
+
+	mem := env.Module.Memory()
+
+	// Prepare UTF-8 bytes from data
+	bytes := []byte(data)
+	// Allocate buffer for string bytes
+	strPtr, err := env.Malloc(uint64(len(bytes)))
+	if err != nil {
+		return 0, fmt.Errorf("malloc for string failed: %w", err)
+	}
+
+	// Write bytes into memory
+	if ok := mem.Write(uint32(strPtr), bytes); !ok {
+		_ = env.Free(strPtr, uint64(len(bytes)))
+		return 0, fmt.Errorf("cannot write string bytes to wasm memory")
+	}
+
+	return strPtr, nil
+}
+
+func (env WasmEnv) getArea(size uint64) (uint64, error) {
+	retPtr, err := env.Malloc(size)
+	if err != nil {
+		return 0, fmt.Errorf("malloc for area failed: %w", err)
+	}
+
+	return retPtr, nil
+}
+
+// ReturnAreaSize is the size of the return area in bytes.
+// 0:4 bytes: value pointer
+// 4:4 bytes: error pointer
+// 8:4 bytes: is_err
+const ReturnAreaSize = uint64(16)
+
+// GetReturnArea ReturnAreaSize is the size of the return area in bytes.
+func (env WasmEnv) GetReturnArea() (uint64, error) {
+	// Allocate return area (3 u32 values: value_ptr, error_ptr, is_err)
+	return env.getArea(ReturnAreaSize)
+}
+
+// StringAreaSize is the size of the string area in bytes.
+// 0:4 bytes: string pointer
+// 4:8 bytes: string length
+const StringAreaSize = uint64(8)
+
+// GetStringArea StringAreaSize is the size of the string area in bytes.
+func (env WasmEnv) GetStringArea() (uint64, error) {
+	// Allocate return area (2 u32 values: string_ptr, string_len)
+	return env.getArea(StringAreaSize)
+}
+
+func (env WasmEnv) GetPointee(ptr uint64) (uint64, error) {
+	mem := env.Module.Memory()
+
+	// Read result triple
+	buf, ok := mem.Read(uint32(ptr), uint32(ReturnAreaSize))
+	if !ok {
+		return 0, fmt.Errorf("cannot read return area")
+	}
+	valuePtr := binary.LittleEndian.Uint32(buf[0:4])
+	errPtr := binary.LittleEndian.Uint32(buf[4:8])
+	isErr := int32(binary.LittleEndian.Uint32(buf[8:12]))
+
+	if isErr != 0 {
+
+		serr, err := env.GetError(uint64(errPtr))
+		if err != nil {
+			return 0, fmt.Errorf("cannot get error string: %w", err)
+		}
+		return 0, errors.New(serr)
+	}
+
+	return uint64(valuePtr), nil
 }

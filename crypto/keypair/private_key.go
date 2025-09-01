@@ -13,6 +13,10 @@ type PrivateKey struct {
 	ptr uint64
 }
 
+func (private_key PrivateKey) New(env wasm.WasmEnv) PrivateKey {
+	return PrivateKey{env: env, ptr: 0}
+}
+
 func InvokePrivateKey(env wasm.WasmEnv) PrivateKey {
 	return PrivateKey{env: env, ptr: 0}
 }

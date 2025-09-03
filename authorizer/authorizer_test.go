@@ -7,7 +7,7 @@ import (
 )
 
 func TestAuthorizer_authorize(t *testing.T) {
-	token, err := factory.MakeBiscuit(env, "user(2)")
+	token, err := factory.MakeBiscuit(env, "user(1)")
 	if err != nil {
 		t.Error(err)
 		return
@@ -19,7 +19,7 @@ func TestAuthorizer_authorize(t *testing.T) {
 		return
 	}
 
-	authorizeCode := "allow if user(1); allow if true"
+	authorizeCode := "deny if user(1); allow if true"
 
 	err = authorizerBuilder.AddCode(authorizeCode)
 	if err != nil {

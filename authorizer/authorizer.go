@@ -1,6 +1,9 @@
 package authorizer
 
-import "biscuit-wasm-go/wasm"
+import (
+	"biscuit-wasm-go/shared"
+	"biscuit-wasm-go/wasm"
+)
 
 type Authorizer struct {
 	env wasm.WasmEnv
@@ -9,6 +12,18 @@ type Authorizer struct {
 
 func (authorizer Authorizer) New(env wasm.WasmEnv, ptr uint64) Authorizer {
 	return Authorizer{env: env, ptr: ptr}
+}
+
+func (authorizer Authorizer) Ptr() uint64 {
+	return authorizer.ptr
+}
+
+func (authorizer Authorizer) ToStringWasmFunction() string {
+	return "authorizer_toString"
+}
+
+func (authorizer Authorizer) ToString() (string, error) {
+	return shared.AsString(authorizer.env, authorizer)
 }
 
 func (authorizer Authorizer) Authorize() (uint64, error) {

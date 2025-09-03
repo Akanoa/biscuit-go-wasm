@@ -5,6 +5,7 @@
 package wasm
 
 import (
+	error2 "biscuit-wasm-go/error"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -205,7 +206,8 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 		return "unknown error", nil
 	case string:
 		return data, nil
-	case map[string]any:
+
+	case map[string]interface{}:
 		// Prefer a stable, human-friendly serialization without Go's map[...] prefix
 		// Common shape from wasm-bindgen is nested single-key maps representing error enums, e.g.:
 		// {"FailedLogic": {"NoMatchingPolicy": {"checks": {}}}}
@@ -218,7 +220,22 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 			}
 			var k string
 			var v any
-			for kk, vv := range cur { k, v = kk, vv }
+			for kk, vv := range cur {
+				k, v = kk, vv
+			}
+
+			// If the value is a nested error payload, handle known top-level error kinds
+			switch vData := v.(type) {
+			case map[string]interface{}:
+				switch k {
+				case "FailedLogic":
+					return error2.FailedLogicError{Data: vData}.Error(), nil
+				default:
+					// Unknown structured error type; fall through to generic message assembly
+					fmt.Printf("Unknown error type: %s\n", k)
+				}
+			}
+
 			parts = append(parts, k)
 			// descend if the value is another map[string]any
 			next, ok := v.(map[string]any)
@@ -235,6 +252,7 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 			}
 			cur = next
 		}
+
 		if len(parts) > 0 {
 			// Special-case to avoid redundant trailing technical segments like "checks" when empty
 			if len(parts) >= 2 && parts[len(parts)-1] == "checks" {
@@ -260,7 +278,9 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 		}
 		out := ""
 		for i, k := range keys {
-			if i > 0 { out += ", " }
+			if i > 0 {
+				out += ", "
+			}
 			out += fmt.Sprintf("%s: %v", k, data[k])
 		}
 

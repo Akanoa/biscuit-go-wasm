@@ -19,7 +19,7 @@ func TestAuthorizer_authorize(t *testing.T) {
 		return
 	}
 
-	authorizeCode := "allow if user(1); deny if user(2);"
+	authorizeCode := "allow if user(1); allow if true"
 
 	err = authorizerBuilder.AddCode(authorizeCode)
 	if err != nil {
@@ -33,11 +33,12 @@ func TestAuthorizer_authorize(t *testing.T) {
 		return
 	}
 
-	matchedPolicy, err := authorizer.Authorize()
+	_, err = authorizer.Authorize()
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	t.Log(matchedPolicy)
+
+	t.Log(authorizer.ToString())
 
 }

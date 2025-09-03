@@ -36,8 +36,14 @@ func (builder AuthorizerBuilder) New(env wasm.WasmEnv) (AuthorizerBuilder, error
 		return AuthorizerBuilder{}, err
 	}
 
+	if len(ret) == 0 {
+		return AuthorizerBuilder{}, fmt.Errorf("no result returned from authorizerbuilder_new")
+	}
+
 	builder.env = env
 	builder.ptr = ret[0]
+
+	fmt.Println("AuthorizerBuilder ptr:", builder.ptr)
 
 	return builder, nil
 }
@@ -48,24 +54,27 @@ func (builder *AuthorizerBuilder) Build(biscuit token.Biscuit) (authorizer.Autho
 		return authorizer.Authorizer{}, fmt.Errorf("builder not initialized")
 	}
 
+	// First try the authenticated build path.
 	function, err := builder.env.GetFunction("authorizerbuilder_buildAuthenticated")
 	if err != nil {
 		return authorizer.Authorizer{}, err
 	}
 
 	returnPtr, err := builder.env.GetReturnArea()
+	if err != nil {
+		return authorizer.Authorizer{}, err
+	}
 	defer builder.env.Free(returnPtr, wasm.ReturnAreaSize)
 
 	_, err = builder.env.Call(function, returnPtr, builder.ptr, biscuit.Ptr())
 	if err != nil {
-		slog.Error("authorizerbuilder_buildAuthenticated failed", slog.Any("err", err))
 		return authorizer.Authorizer{}, err
 	}
 
-	valuePtr, err := builder.env.GetPointee(returnPtr)
-	if err != nil {
-		slog.Error("authorizerbuilder_build failed, unable to get return value", slog.Any("err", err))
-		return authorizer.Authorizer{}, err
+	valuePtr, gErr := builder.env.GetPointee(returnPtr)
+	if gErr != nil {
+		slog.Error("authorizerbuilder_buildAuthenticated failed, unable to get return value", slog.Any("err", gErr))
+		return authorizer.Authorizer{}, gErr
 	}
 
 	return authorizer.Authorizer{}.New(builder.env, valuePtr), nil
@@ -88,14 +97,21 @@ func (builder *AuthorizerBuilder) AddCode(code string) error {
 	}
 	defer builder.env.Free(strPtr, uint64(len(code)))
 
-	returnPtr, err := builder.env.GetReturnArea()
+	// authorizerbuilder_addCode returns a 2-slot Result (ptr_or_err, is_err).
+	returnPtr, err := builder.env.GetSmallReturnArea()
 	if err != nil {
 		return err
 	}
+	defer builder.env.Free(returnPtr, wasm.SmallReturnAreaSize)
 
 	_, err = builder.env.Call(function, returnPtr, builder.ptr, strPtr, uint64(len(code)))
 	if err != nil {
 		return fmt.Errorf("authorizerbuilder_addCode failed: %w", err)
+	}
+
+	// Inspect the Result in the return area to surface parser errors instead of panicking later.
+	if _, err := builder.env.GetResult2(returnPtr); err != nil {
+		return fmt.Errorf("authorizerbuilder_addCode error: %w", err)
 	}
 	return nil
 }

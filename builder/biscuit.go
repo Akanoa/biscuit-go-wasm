@@ -92,10 +92,16 @@ func (builder *BiscuitBuilder) AddCode(code string) error {
 	if err != nil {
 		return err
 	}
+	defer builder.env.Free(returnPtr, wasm.ReturnAreaSize)
 
 	_, err = builder.env.Call(function, returnPtr, builder.ptr, strPtr, uint64(len(code)))
 	if err != nil {
 		return fmt.Errorf("biscuitbuilder_addCode failed: %w", err)
+	}
+
+	// Inspect the Result in the return area to surface parser errors immediately.
+	if _, err := builder.env.GetPointee(returnPtr); err != nil {
+		return fmt.Errorf("biscuitbuilder_addCode error: %w", err)
 	}
 	return nil
 }

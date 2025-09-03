@@ -207,25 +207,45 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 		return data, nil
 	case map[string]any:
 		// Prefer a stable, human-friendly serialization without Go's map[...] prefix
-		// Common shape from wasm-bindgen is { "InvalidByte": {} } or similar.
-		// If the map contains a single key with empty object, render just the key name.
-		if len(data) == 1 {
-			for k, inner := range data {
-				// If inner is an empty map or struct, print only the key
-				empty := false
-				switch iv := inner.(type) {
-				case map[string]any:
-					empty = len(iv) == 0
-				case map[any]any:
-					empty = len(iv) == 0
-				default:
-					empty = fmt.Sprintf("%v", iv) == "map[]"
-				}
-				if empty {
-					return k, nil
-				}
-				return fmt.Sprintf("%s: %v", k, inner), nil
+		// Common shape from wasm-bindgen is nested single-key maps representing error enums, e.g.:
+		// {"FailedLogic": {"NoMatchingPolicy": {"checks": {}}}}
+		// Collapse nested single-key maps into a path like "FailedLogic: NoMatchingPolicy".
+		var parts []string
+		cur := data
+		for {
+			if len(cur) != 1 {
+				break
 			}
+			var k string
+			var v any
+			for kk, vv := range cur { k, v = kk, vv }
+			parts = append(parts, k)
+			// descend if the value is another map[string]any
+			next, ok := v.(map[string]any)
+			if !ok {
+				// If value is an empty map[any]any or prints as map[], stop and emit path
+				if fmt.Sprintf("%v", v) == "map[]" {
+					break
+				}
+				// Non-map leaf: include its printable form as final segment and stop
+				if v != nil {
+					parts = append(parts, fmt.Sprintf("%v", v))
+				}
+				break
+			}
+			cur = next
+		}
+		if len(parts) > 0 {
+			// Special-case to avoid redundant trailing technical segments like "checks" when empty
+			if len(parts) >= 2 && parts[len(parts)-1] == "checks" {
+				parts = parts[:len(parts)-1]
+			}
+			// Join with ": " for readability
+			msg := parts[0]
+			for i := 1; i < len(parts); i++ {
+				msg += ": " + parts[i]
+			}
+			return msg, nil
 		}
 		// Fallback: stable order by keys
 		keys := make([]string, 0, len(data))
@@ -233,26 +253,14 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 			keys = append(keys, k)
 		}
 		// simple insertion sort to avoid importing sort
-		// NOTE:
-		// - Chosen to keep zero extra dependencies (no "sort" import) and preserve
-		//   predictable behavior in constrained environments (WASM/embedded).
-		// - O(n^2) complexity is acceptable here since the number of error keys is small.
-		// - Ascending lexicographic order ensures deterministic, stable error message
-		//   serialization across runs and platforms.
 		for i := 1; i < len(keys); i++ {
 			for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
 				keys[j-1], keys[j] = keys[j], keys[j-1]
 			}
 		}
-		// Build a human-readable representation: "k1: v1, k2: v2, ..."
-		// Goals:
-		// - Provide a stable, human-friendly concatenation of sorted key/value pairs.
-		// - Avoid Go-specific map formatting artifacts (e.g., map[...]).
 		out := ""
 		for i, k := range keys {
-			if i > 0 {
-				out += ", "
-			}
+			if i > 0 { out += ", " }
 			out += fmt.Sprintf("%s: %v", k, data[k])
 		}
 
@@ -294,16 +302,30 @@ func (env WasmEnv) getArea(size uint64) (uint64, error) {
 	return retPtr, nil
 }
 
-// ReturnAreaSize is the size of the return area in bytes.
-// 0:4 bytes: value pointer
-// 4:4 bytes: error pointer
-// 8:4 bytes: is_err
+// ReturnAreaSize is the size of the return area used by functions that return
+// Result<T, E> where wasm-bindgen lays out three u32 slots:
+// 0:4 bytes: value pointer (or 0)
+// 4:4 bytes: error externref index (or 0)
+// 8:4 bytes: is_err (0 = Ok, non-zero = Err)
+// Note: Some exports use a compact, 2-slot layout: (ptr_or_err, is_err).
+// For those, use SmallReturnAreaSize and GetResult2.
 const ReturnAreaSize = uint64(16)
 
 // GetReturnArea ReturnAreaSize is the size of the return area in bytes.
 func (env WasmEnv) GetReturnArea() (uint64, error) {
 	// Allocate return area (3 u32 values: value_ptr, error_ptr, is_err)
 	return env.getArea(ReturnAreaSize)
+}
+
+// SmallReturnAreaSize is used by some wasm-bindgen exports that encode
+// Result-like values in 2 u32 slots:
+// 0:4 bytes: value pointer or error externref index
+// 4:4 bytes: is_err (0 = Ok, non-zero = Err)
+const SmallReturnAreaSize = uint64(8)
+
+// GetSmallReturnArea allocates a 2-slot return area (ptr_or_err, is_err).
+func (env WasmEnv) GetSmallReturnArea() (uint64, error) {
+	return env.getArea(SmallReturnAreaSize)
 }
 
 // StringAreaSize is the size of the string area in bytes.
@@ -332,7 +354,6 @@ func (env WasmEnv) GetPointee(ptr uint64) (uint64, error) {
 	isErr := int32(binary.LittleEndian.Uint32(buf[8:12]))
 
 	if isErr != 0 {
-
 		serr, err := env.GetError(uint64(errPtr))
 		if err != nil {
 			return 0, fmt.Errorf("cannot get error string: %w", err)
@@ -341,4 +362,25 @@ func (env WasmEnv) GetPointee(ptr uint64) (uint64, error) {
 	}
 
 	return uint64(valuePtr), nil
+}
+
+// GetResult2 decodes a 2-slot Result area allocated with SmallReturnAreaSize.
+// It returns the value pointer on Ok, or an error constructed from the externref
+// index on Err.
+func (env WasmEnv) GetResult2(ptr uint64) (uint64, error) {
+	mem := env.Module.Memory()
+	buf, ok := mem.Read(uint32(ptr), uint32(SmallReturnAreaSize))
+	if !ok {
+		return 0, fmt.Errorf("cannot read small return area")
+	}
+	ptrOrErr := binary.LittleEndian.Uint32(buf[0:4])
+	isErr := binary.LittleEndian.Uint32(buf[4:8])
+	if isErr != 0 {
+		msg, err := env.GetError(uint64(ptrOrErr))
+		if err != nil {
+			return 0, fmt.Errorf("cannot get error string: %w", err)
+		}
+		return 0, errors.New(msg)
+	}
+	return uint64(ptrOrErr), nil
 }

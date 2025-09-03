@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -37,6 +38,8 @@ var (
 	// taBuf stores JS-allocated typed array contents (not backed by wasm memory)
 	taBuf = map[uint32][]byte{}
 )
+
+var perfStart = time.Now()
 
 // JsNull is a sentinel type used to mirror JavaScript's `null` in the externref table.
 type JsNull struct{}
@@ -482,6 +485,15 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			}), params, results).Export(name)
 
 		// Newly added passthroughs required by issue
+		case "__wbg_performancenow_fd590e2decc0b71a":
+			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+				// Signature is (this: Performance) -> f64 milliseconds
+				if len(stack) > 0 {
+					_ = api.DecodeU32(stack[0]) // ignore receiver handle
+				}
+				elapsed := time.Since(perfStart)
+				stack[0] = api.EncodeF64(float64(elapsed) / float64(time.Millisecond))
+			}), params, results).Export(name)
 		case "__wbg_static_accessor_SELF_37c5d418e4bf5819", "__wbg_static_accessor_WINDOW_5de37043a91a9c40", "__wbg_static_accessor_GLOBAL_THIS_56578be7e9f832b0", "__wbg_static_accessor_GLOBAL_88a902d13a557d07":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				if globalObjHandle == 0 {
@@ -594,6 +606,27 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				// No-op; return default/zero based on expected results
 				_ = stack
+			}), params, results).Export(name)
+
+		case "__wbindgen_throw":
+			// wasm-bindgen uses this to throw JS exceptions. Do NOT panic; capture the message in the externref table
+			// so callers can retrieve it via GetError without trapping the runtime.
+			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
+				mem := m.Memory()
+				ptr := api.DecodeU32(stack[0])
+				ln := api.DecodeU32(stack[1])
+				msg := "wasm-bindgen throw"
+				if ln > 0 {
+					if buf, ok := mem.Read(ptr, ln); ok {
+						msg = string(buf)
+					}
+				}
+				// Store the message as a new externref entry for later retrieval by host code.
+				if len(ExternrefTableMirror) == 0 {
+					ExternrefTableMirror = append(ExternrefTableMirror, nil)
+				}
+				ExternrefTableMirror = append(ExternrefTableMirror, msg)
+				// Do not panic: simply return to let the guest continue or handle error paths.
 			}), params, results).Export(name)
 
 		default:

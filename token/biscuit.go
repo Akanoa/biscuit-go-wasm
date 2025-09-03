@@ -75,3 +75,53 @@ func (biscuit Biscuit) FromBase64(env wasm.WasmEnv, biscuitBase64 string, public
 	biscuit.ptr = valuePtr
 	return biscuit, nil
 }
+
+// ToBytes returns the byte slice representation of the Biscuit.
+func (biscuit Biscuit) ToBytes() ([]byte, error) {
+	if biscuit.ptr == 0 {
+		return nil, fmt.Errorf("token not initialized")
+	}
+
+	function, err := biscuit.env.GetFunction("biscuit_toBytes")
+	if err != nil {
+		return nil, err
+	}
+
+	returnPtr, err := biscuit.env.GetReturnArea()
+	defer biscuit.env.Free(returnPtr, wasm.StringAreaSize)
+
+	_, err = biscuit.env.Call(function, returnPtr, biscuit.ptr)
+	if err != nil {
+		return nil, err
+	}
+
+	return biscuit.env.GetBytesValueFromPointer(returnPtr)
+}
+
+// FromBytes creates a new Biscuit from a byte slice.
+func (biscuit Biscuit) FromBytes(env wasm.WasmEnv, bytes []byte, publicKey keypair.PublicKey) (Biscuit, error) {
+	function, err := env.GetFunction("biscuit_fromBytes")
+	if err != nil {
+		return Biscuit{}, err
+	}
+	returnPtr, err := env.GetReturnArea()
+	defer env.Free(returnPtr, wasm.ReturnAreaSize)
+
+	dataPtr, err := env.WriteBytes(bytes)
+	if err != nil {
+		return Biscuit{}, err
+	}
+	defer env.Free(dataPtr, uint64(len(bytes)))
+
+	_, err = env.Call(function, returnPtr, dataPtr, uint64(len(bytes)), publicKey.Ptr())
+	if err != nil {
+		return Biscuit{}, err
+	}
+
+	valuePtr, err := env.GetPointee(returnPtr)
+	if err != nil {
+		return Biscuit{}, err
+	}
+	return Biscuit{}.New(env, valuePtr), nil
+
+}

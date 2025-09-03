@@ -166,30 +166,50 @@ func (env WasmEnv) Malloc(length uint64) (uint64, error) {
 // ptr (input parameter)
 func (env WasmEnv) GetStringValueFromPointer(ptr uint64) (string, error) {
 
+	bytesData, err := env.GetBytesValueFromPointer(ptr)
+	if err != nil {
+		return "", err
+	}
+
+	return string(bytesData), nil
+}
+
+// GetBytesValueFromPointer bytes slice is a double-pointed value. The first pointer is a pointer to the return area,
+// ptr pointed to an 8-byte area with the following layout:
+// 0: 4 bytes: bytes pointer
+// 4: 4 bytes: bytes length
+// This second pointer is the actual bytes data, we read the length and decode the string from memory
+// and free the return area.
+//
+// Memory Layout Diagram:
+// +----------------+     +-------------------+
+// | Return Area    |     | Bytes Data        |
+// | (8 bytes)      |     | (variable length) |
+// +----------------+     +-------------------+
+// | Bytes Ptr    --|---->| Actual bytes    |
+// | Bytes Length   |     | content...       |
+// +----------------+     +-------------------+
+//
+//	^
+//	|
+//
+// ptr (input parameter)
+func (env WasmEnv) GetBytesValueFromPointer(ptr uint64) ([]byte, error) {
+
 	// read return area
 	mem := env.Module.Memory()
 	buf, ok := mem.Read(uint32(ptr), 8)
 	if !ok {
 		slog.Error("cannot read return area")
-		return "", fmt.Errorf("cannot read return area")
+		return nil, fmt.Errorf("cannot read return area")
 	}
-	strPtr := binary.LittleEndian.Uint32(buf[0:4])
-	strLen := binary.LittleEndian.Uint32(buf[4:8])
+	bytesPtr := binary.LittleEndian.Uint32(buf[0:4])
+	bytesLen := binary.LittleEndian.Uint32(buf[4:8])
 
-	// decode string from memory
-	strBytes, ok := mem.Read(strPtr, strLen)
-	if !ok {
-		panic("cannot read string")
-	}
-	stringData := string(strBytes)
+	// get bytes from memory
+	bytesData, ok := mem.Read(bytesPtr, bytesLen)
 
-	err := env.Free(uint64(strPtr), uint64(strLen))
-	if err != nil {
-		slog.Error("cannot free string", slog.Uint64("ptr", uint64(strPtr)), slog.Uint64("len", uint64(strLen)))
-		return "", err
-	}
-
-	return stringData, nil
+	return bytesData, nil
 }
 
 // GetError retrieves the error associated with a given externref index from the ExternrefTableMirror.
@@ -293,10 +313,17 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 // WriteString writes a UTF-8 encoded string to the WebAssembly module's memory and returns a pointer to its location.
 func (env WasmEnv) WriteString(data string) (uint64, error) {
 
-	mem := env.Module.Memory()
-
 	// Prepare UTF-8 bytes from data
 	bytes := []byte(data)
+
+	return env.WriteBytes(bytes)
+}
+
+// WriteBytes writes a UTF-8 encoded string to the WebAssembly module's memory and returns a pointer to its location.
+func (env WasmEnv) WriteBytes(bytes []byte) (uint64, error) {
+
+	mem := env.Module.Memory()
+
 	// Allocate buffer for string bytes
 	strPtr, err := env.Malloc(uint64(len(bytes)))
 	if err != nil {

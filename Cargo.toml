@@ -7,8 +7,10 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
 wasm-bindgen = "0.2.100"
 biscuit-wasm = {git = "https://github.com/eclipse-biscuit/biscuit-wasm.git", rev = "2dc0467c07d85f8044bbb202c79a724f9aa8a1d7"}
+serde-wasm-bindgen = "0.6.5"
 
 [profile.dev]
 panic = "abort"

@@ -43,12 +43,12 @@ func (builder AuthorizerBuilder) New(env wasm.WasmEnv) (AuthorizerBuilder, error
 }
 
 // Build builds the Biscuit using the provided private key.
-func (builder *AuthorizerBuilder) Build(privateKey token.Biscuit) (authorizer.Authorizer, error) {
+func (builder *AuthorizerBuilder) Build(biscuit token.Biscuit) (authorizer.Authorizer, error) {
 	if builder.ptr == 0 {
 		return authorizer.Authorizer{}, fmt.Errorf("builder not initialized")
 	}
 
-	function, err := builder.env.GetFunction("authorizerbuilder_build")
+	function, err := builder.env.GetFunction("authorizerbuilder_buildAuthenticated")
 	if err != nil {
 		return authorizer.Authorizer{}, err
 	}
@@ -56,9 +56,9 @@ func (builder *AuthorizerBuilder) Build(privateKey token.Biscuit) (authorizer.Au
 	returnPtr, err := builder.env.GetReturnArea()
 	defer builder.env.Free(returnPtr, wasm.ReturnAreaSize)
 
-	_, err = builder.env.Call(function, returnPtr, builder.ptr, privateKey.Ptr())
+	_, err = builder.env.Call(function, returnPtr, builder.ptr, biscuit.Ptr())
 	if err != nil {
-		slog.Error("authorizerbuilder_build failed", slog.Any("err", err))
+		slog.Error("authorizerbuilder_buildAuthenticated failed", slog.Any("err", err))
 		return authorizer.Authorizer{}, err
 	}
 

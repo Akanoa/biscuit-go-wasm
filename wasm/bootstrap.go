@@ -602,6 +602,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				// By default, do nothing. Wazero pre-zeros the stack slots for results, so this acts as a safe passthrough.
 				// Intentionally no logging here to keep library output clean.
+				fmt.Println("-----------WARNING: unrecognized import", name)
 				_ = stack
 			}), params, results).Export(name)
 		}

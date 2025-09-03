@@ -1,6 +1,7 @@
 package token_test
 
 import (
+	"biscuit-wasm-go/factory"
 	tokenModule "biscuit-wasm-go/token"
 	"testing"
 )
@@ -8,7 +9,7 @@ import (
 func TestBiscuit_FromBase64(t *testing.T) {
 	code := "user(1)"
 
-	token, err := MakeBisuit(code)
+	token, err := factory.MakeBiscuit(code)
 	if err != nil {
 		t.Error(err)
 	}

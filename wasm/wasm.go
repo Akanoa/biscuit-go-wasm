@@ -158,10 +158,11 @@ func (env WasmEnv) Malloc(length uint64) (uint64, error) {
 // | String Ptr   --|---->| Actual string    |
 // | String Length  |     | content...       |
 // +----------------+     +-------------------+
-//   ^
-//   |
+//
+//	^
+//	|
+//
 // ptr (input parameter)
-
 func (env WasmEnv) GetStringValueFromPointer(ptr uint64) (string, error) {
 
 	// read return area
@@ -283,6 +284,7 @@ func (env WasmEnv) WriteString(data string) (uint64, error) {
 	return strPtr, nil
 }
 
+// getArea allocates a new area of the given size in bytes.
 func (env WasmEnv) getArea(size uint64) (uint64, error) {
 	retPtr, err := env.Malloc(size)
 	if err != nil {
@@ -315,6 +317,8 @@ func (env WasmEnv) GetStringArea() (uint64, error) {
 	return env.getArea(StringAreaSize)
 }
 
+// GetPointee returns the value pointed to by the given pointer.
+// The pointer is expected to point to a return area.
 func (env WasmEnv) GetPointee(ptr uint64) (uint64, error) {
 	mem := env.Module.Memory()
 

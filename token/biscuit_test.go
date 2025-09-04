@@ -44,19 +44,33 @@ func TestBiscuit_FromBase64(t *testing.T) {
 
 // TestBiscuit_FromBytes verifies the creation of a biscuit from bytes.
 func TestBiscuit_FromBytes(t *testing.T) {
+
+	mem, err := env.GetMemory()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	x := mem.Size()
+	fmt.Println(x)
+
 	code := "right(\"file1\", \"read\");\nright(\"file2\", \"read\");\nright(\"file1\", \"write\");\n"
 
+	fmt.Println("------------------------Make Biscuit------------------------------------")
 	token, err := factory.MakeBiscuit(env, code)
 	if err != nil {
 		t.Error(err)
+		return
 	}
 
+	fmt.Println("---------------------- To base64 ---------------------------------------")
 	expectedBase64, err := token.Token.ToBase64()
 	if err != nil {
 		t.Error(err)
 		return
 	}
 
+	fmt.Println("---------------------- To bytes ---------------------------------------")
 	expectedBytes, err := token.Token.ToBytes()
 	if err != nil {
 		t.Error(err)
@@ -64,8 +78,30 @@ func TestBiscuit_FromBytes(t *testing.T) {
 
 	fmt.Println(expectedBytes)
 
+	mem, err = env.GetMemory()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	x = mem.Size()
+	fmt.Println("before from bytes call", x)
+
+	//a, b := mem.Grow(0)
+	//if !b {
+	//	t.Error("failed to grow memory")
+	//	return
+	//}
+	//fmt.Println(a)
+
+	println("-----------------------------From bytes -----------------------------------")
+
 	biscuit, err := tokenModule.Biscuit{}.FromBytes(env, expectedBytes, token.PublicKey)
 	if err != nil {
+
+		x := mem.Size()
+		fmt.Println("After from bytes call", x)
+
 		t.Error(err)
 		return
 	}
@@ -75,6 +111,13 @@ func TestBiscuit_FromBytes(t *testing.T) {
 		t.Error(err)
 		return
 	}
+
+	fmt.Println(token.Token)
+	fmt.Println(biscuit)
+
+	fmt.Println(base64)
+	fmt.Println(expectedBase64)
+	fmt.Println(base64 == expectedBase64)
 
 	if expectedBase64 != base64 {
 		t.Errorf("Expected %s, got %s", expectedBase64, base64)

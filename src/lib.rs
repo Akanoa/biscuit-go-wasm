@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::JsValue;
 
-
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct RunLimits {
     pub max_facts: Option<u64>,

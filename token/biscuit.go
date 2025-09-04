@@ -88,7 +88,7 @@ func (biscuit Biscuit) ToBytes() ([]byte, error) {
 	}
 
 	returnPtr, err := biscuit.env.GetReturnArea()
-	defer biscuit.env.Free(returnPtr, wasm.StringAreaSize)
+	defer biscuit.env.Free(returnPtr, wasm.ReturnAreaSize)
 
 	_, err = biscuit.env.Call(function, returnPtr, biscuit.ptr)
 	if err != nil {
@@ -108,6 +108,18 @@ func (biscuit Biscuit) FromBytes(env wasm.WasmEnv, bytes []byte, publicKey keypa
 	defer env.Free(returnPtr, wasm.ReturnAreaSize)
 
 	dataPtr, err := env.WriteBytes(bytes)
+
+	mem, err := env.GetMemory()
+	if err != nil {
+		return Biscuit{}, err
+	}
+
+	data, ok := mem.Read(uint32(dataPtr), uint32(len(bytes)))
+	if !ok {
+		return Biscuit{}, fmt.Errorf("cannot read bytes from memory")
+	}
+	fmt.Printf("ptr %x data: %v\n", dataPtr, data)
+
 	if err != nil {
 		return Biscuit{}, err
 	}

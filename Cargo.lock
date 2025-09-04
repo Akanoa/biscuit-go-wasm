@@ -97,7 +97,6 @@ dependencies = [
 [[package]]
 name = "biscuit-wasm"
 version = "0.6.0"
-source = "git+https://github.com/eclipse-biscuit/biscuit-wasm.git?rev=2dc0467c07d85f8044bbb202c79a724f9aa8a1d7#2dc0467c07d85f8044bbb202c79a724f9aa8a1d7"
 dependencies = [
  "biscuit-auth",
  "console_error_panic_hook",
@@ -1047,8 +1046,6 @@ dependencies = [
 [[package]]
 name = "wee_alloc"
 version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbb3b5a6b2bb17cb6ad44a2e68a43e8d2722c997da10e928665c72ec6c0a0b8e"
 dependencies = [
  "cfg-if 0.1.10",
  "libc",

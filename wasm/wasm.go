@@ -68,7 +68,8 @@ func CloseWasmModule(module api.Module, goContext context.Context) {
 func InitWasm() (WasmEnv, error) {
 	ctx := context.Background()
 	// Create a new runtime
-	runtime := wazero.NewRuntime(ctx)
+	runtimeConfig := wazero.NewRuntimeConfig().WithMemoryCapacityFromMax(true).WithMemoryLimitPages(100).WithDebugInfoEnabled(true)
+	runtime := wazero.NewRuntimeWithConfig(ctx, runtimeConfig)
 
 	var sourceWasm []byte
 	var err error
@@ -116,6 +117,7 @@ func InitWasm() (WasmEnv, error) {
 
 func (env WasmEnv) Free(ptr uint64, length uint64) error {
 	free, err := env.GetFunction("__wbindgen_free")
+	fmt.Printf("ptr %x free: %v\n", ptr, length)
 	if err != nil {
 		slog.Error("exported function not found", slog.String("name", "__wbindgen_free"))
 		return err
@@ -140,6 +142,8 @@ func (env WasmEnv) Malloc(length uint64) (uint64, error) {
 		slog.Error("malloc failed: unexpected return value")
 		return 0, fmt.Errorf("malloc failed: unexpected return value")
 	}
+
+	fmt.Printf("malloc: %x length %d\n", results[0], length)
 
 	return results[0], nil
 }
@@ -233,6 +237,7 @@ func (env WasmEnv) GetError(idx uint64) (string, error) {
 		// {"FailedLogic": {"NoMatchingPolicy": {"checks": {}}}}
 		// Collapse nested single-key maps into a path like "FailedLogic: NoMatchingPolicy".
 		var parts []string
+		fmt.Printf("data: %v\n", data)
 		cur := data
 		for {
 			if len(cur) != 1 {

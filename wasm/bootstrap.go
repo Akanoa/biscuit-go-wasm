@@ -61,6 +61,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		if !isImport {
 			continue
 		}
+		//fmt.Println("Importing module: ", modName, name)
 
 		if modName != "__wbindgen_placeholder__" && modName != "__wbindgen_externref_xform__" {
 			return fmt.Errorf("unsupported import module: %s.%s", modName, name)
@@ -79,6 +80,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		switch name {
 		case "__wbindgen_init_externref_table":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+				fmt.Println("****************INIT****************")
 				if len(ExternrefTableMirror) == 0 {
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
@@ -90,7 +92,6 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				ExternrefTableMirror[offset+1] = JsNull{}
 				ExternrefTableMirror[offset+2] = true
 				ExternrefTableMirror[offset+3] = false
-				externrefTableSize = uint32(len(ExternrefTableMirror))
 				_ = stack
 			}), params, results).Export(name)
 
@@ -108,6 +109,22 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		case "__wbindgen_externref_heap_live_count":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror)))
+			}), params, results).Export(name)
+		case "__wbindgen_externref_table_grow":
+			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+				delta := api.DecodeU32(stack[0])
+				previousSize := uint32(len(ExternrefTableMirror))
+
+				// Grow the externref table by delta entries
+				for i := uint32(0); i < delta; i++ {
+					ExternrefTableMirror = append(ExternrefTableMirror, nil)
+				}
+
+				// Update the tracked size
+				externrefTableSize = uint32(len(ExternrefTableMirror))
+
+				// Return the previous size
+				stack[0] = api.EncodeU32(previousSize)
 			}), params, results).Export(name)
 
 		// Randomness helpers seen in wasm-bindgen glue
@@ -171,7 +188,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		// Type checks and constructors
 		case "__wbindgen_is_null":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				var v any
 				if idx < uint32(len(ExternrefTableMirror)) {
 					v = ExternrefTableMirror[idx]
@@ -185,7 +202,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			}), params, results).Export(name)
 		case "__wbindgen_is_undefined":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				var v any
 				if idx < uint32(len(ExternrefTableMirror)) {
 					v = ExternrefTableMirror[idx]
@@ -198,7 +215,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			}), params, results).Export(name)
 		case "__wbindgen_is_string":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				ok := idx < uint32(len(ExternrefTableMirror))
 				if ok {
 					_, ok = ExternrefTableMirror[idx].(string)
@@ -222,13 +239,13 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
 				ExternrefTableMirror = append(ExternrefTableMirror, f)
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
+				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
 			}), params, results).Export(name)
 
 		case "__wbindgen_number_get":
 			// Returns Option<f64> encoded as (f64, i32 is_some) in result slots.
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				var (
 					f      float64
 					isSome uint32
@@ -246,7 +263,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		case "__wbindgen_boolean_get":
 			// Returns 1 if true, else 0
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				ret := uint32(0)
 				if int(idx) < len(ExternrefTableMirror) {
 					if v, ok := ExternrefTableMirror[idx].(bool); ok && v {
@@ -259,7 +276,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		case "__wbg_isSafeInteger_343e2beeeece1bb0":
 			// Number.isSafeInteger(x)
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				ret := uint32(0)
 				const MaxSafe = 9007199254740991.0 // 2^53 - 1
 				if int(idx) < len(ExternrefTableMirror) {
@@ -294,7 +311,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
 				ExternrefTableMirror = append(ExternrefTableMirror, string(buf))
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
+				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
 			}), params, results).Export(name)
 
 		// Minimal JSON helpers
@@ -309,7 +326,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 					}
 					// Store parsed JSON as string in externref mirror (minimal implementation).
 					ExternrefTableMirror = append(ExternrefTableMirror, string(buf))
-					stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
+					stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
 				} else {
 					stack[0] = api.EncodeU32(0)
 				}
@@ -317,7 +334,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		case "__wbindgen_json_serialize":
 			// Returns a WasmSlice (ptr,len) according to import signature; we rely on wazero to shape results.
 			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				var s string
 				if idx < uint32(len(ExternrefTableMirror)) {
 					if v, ok := ExternrefTableMirror[idx].(string); ok {
@@ -353,12 +370,12 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				}
 				// Create and store a new empty array in the externref mirror.
 				ExternrefTableMirror = append(ExternrefTableMirror, []any{})
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
+				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
 			}), params, results).Export(name)
 		case "__wbindgen_array_push":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				arrIdx := api.DecodeU32(stack[0])
-				valIdx := api.DecodeU32(stack[1])
+				arrIdx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
+				valIdx := api.DecodeU32(stack[1]) - 128 // Subtract JSIDX_OFFSET
 				if int(arrIdx) < len(ExternrefTableMirror) {
 					if s, ok := ExternrefTableMirror[arrIdx].([]any); ok {
 						var v any
@@ -372,7 +389,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 
 		case "__wbindgen_not":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0])
+				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
 				var truthy bool
 				if int(idx) < len(ExternrefTableMirror) {
 					switch v := ExternrefTableMirror[idx].(type) {
@@ -396,8 +413,8 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 		// Minimal equality helpers
 		case "__wbindgen_jsval_eq", "__wbindgen_jsval_loose_eq":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				a := api.DecodeU32(stack[0])
-				b := api.DecodeU32(stack[1])
+				a := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
+				b := api.DecodeU32(stack[1]) - 128 // Subtract JSIDX_OFFSET
 				var va, vb any
 				if int(a) < len(ExternrefTableMirror) {
 					va = ExternrefTableMirror[a]
@@ -501,7 +518,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 						ExternrefTableMirror = append(ExternrefTableMirror, nil)
 					}
 					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "global"})
-					globalObjHandle = uint32(len(ExternrefTableMirror) - 1)
+					globalObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
 				}
 				stack[0] = api.EncodeU32(globalObjHandle)
 			}), params, results).Export(name)
@@ -513,7 +530,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 						ExternrefTableMirror = append(ExternrefTableMirror, nil)
 					}
 					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "crypto"})
-					cryptoObjHandle = uint32(len(ExternrefTableMirror) - 1)
+					cryptoObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
 				}
 				stack[0] = api.EncodeU32(cryptoObjHandle)
 			}), params, results).Export(name)
@@ -535,7 +552,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 						ExternrefTableMirror = append(ExternrefTableMirror, nil)
 					}
 					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "memory"})
-					memoryObjHandle = uint32(len(ExternrefTableMirror) - 1)
+					memoryObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
 				}
 				stack[0] = api.EncodeU32(memoryObjHandle)
 			}), params, results).Export(name)
@@ -547,7 +564,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 						ExternrefTableMirror = append(ExternrefTableMirror, nil)
 					}
 					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "buffer"})
-					bufferObjHandle = uint32(len(ExternrefTableMirror) - 1)
+					bufferObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
 				}
 				stack[0] = api.EncodeU32(bufferObjHandle)
 			}), params, results).Export(name)
@@ -557,14 +574,14 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
 				ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{})
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1))
+				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
 			}), params, results).Export(name)
 		case "__wbg_set_3f1d0b984ed272ed", "__wbg_set_37837023f3d740e8":
 			// Reflect.set(target, key, value) -> bool
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				target := api.DecodeU32(stack[0])
-				key := api.DecodeU32(stack[1])
-				val := api.DecodeU32(stack[2])
+				target := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
+				key := api.DecodeU32(stack[1]) - 128    // Subtract JSIDX_OFFSET
+				val := api.DecodeU32(stack[2]) - 128    // Subtract JSIDX_OFFSET
 				ok := uint32(0)
 				if int(target) < len(ExternrefTableMirror) {
 					obj := ExternrefTableMirror[target]
@@ -597,7 +614,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 						ExternrefTableMirror = append(ExternrefTableMirror, nil)
 					}
 					ExternrefTableMirror = append(ExternrefTableMirror, "function() { /* noop */ }")
-					functionNoArgsHandle = uint32(len(ExternrefTableMirror) - 1)
+					functionNoArgsHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
 				}
 				stack[0] = api.EncodeU32(functionNoArgsHandle)
 			}), params, results).Export(name)
@@ -628,7 +645,6 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				ExternrefTableMirror = append(ExternrefTableMirror, msg)
 				// Do not panic: simply return to let the guest continue or handle error paths.
 			}), params, results).Export(name)
-
 		default:
 			// Passthrough default: export a function matching the signature that leaves inputs/results unchanged or zeroed.
 			// We avoid special-casing stub names; any unrecognized import gets a no-op implementation.

@@ -68,7 +68,7 @@ func CloseWasmModule(module api.Module, goContext context.Context) {
 func InitWasm() (WasmEnv, error) {
 	ctx := context.Background()
 	// Create a new runtime
-	runtimeConfig := wazero.NewRuntimeConfig().WithMemoryCapacityFromMax(true).WithMemoryLimitPages(100).WithDebugInfoEnabled(true)
+	runtimeConfig := wazero.NewRuntimeConfig().WithMemoryCapacityFromMax(true).WithDebugInfoEnabled(true)
 	runtime := wazero.NewRuntimeWithConfig(ctx, runtimeConfig)
 
 	var sourceWasm []byte
@@ -122,7 +122,7 @@ func (env WasmEnv) Free(ptr uint64, length uint64) error {
 		slog.Error("exported function not found", slog.String("name", "__wbindgen_free"))
 		return err
 	}
-	_, err = env.Call(free, ptr, length, 1)
+	_, err = env.Call(free, ptr, length, 4)
 	return err
 }
 
@@ -132,7 +132,7 @@ func (env WasmEnv) Malloc(length uint64) (uint64, error) {
 		slog.Error("exported function not found", slog.String("name", "__wbindgen_malloc"))
 		return 0, err
 	}
-	results, err := env.Call(malloc, length, 1)
+	results, err := env.Call(malloc, length, 4)
 	if err != nil {
 		slog.Error("malloc failed", slog.Any("err", err))
 		return 0, err
@@ -202,13 +202,23 @@ func (env WasmEnv) GetBytesValueFromPointer(ptr uint64) ([]byte, error) {
 
 	// read return area
 	mem := env.Module.Memory()
-	buf, ok := mem.Read(uint32(ptr), 8)
+	buf, ok := mem.Read(uint32(ptr), 16)
 	if !ok {
 		slog.Error("cannot read return area")
 		return nil, fmt.Errorf("cannot read return area")
 	}
 	bytesPtr := binary.LittleEndian.Uint32(buf[0:4])
 	bytesLen := binary.LittleEndian.Uint32(buf[4:8])
+	errPtr := binary.LittleEndian.Uint32(buf[8:12])
+	isErr := int32(binary.LittleEndian.Uint32(buf[12:16]))
+
+	if isErr != 0 {
+		serr, err := env.GetError(uint64(errPtr))
+		if err != nil {
+			return nil, fmt.Errorf("cannot get error string: %w", err)
+		}
+		return nil, errors.New(serr)
+	}
 
 	// get bytes from memory
 	bytesData, ok := mem.Read(bytesPtr, bytesLen)

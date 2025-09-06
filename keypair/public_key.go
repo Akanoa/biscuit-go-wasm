@@ -34,11 +34,11 @@ func (publicKey PublicKey) FromString(env wasm.WasmEnv, data string, algorithm S
 		return publicKey, err
 	}
 
-	retPtr, err := env.GetReturnArea()
-	if err != nil {
-		return publicKey, fmt.Errorf("malloc for return area failed: %w", err)
-	}
-	defer env.Free(retPtr, wasm.ReturnAreaSize)
+	//retPtr, err := env.GetReturnArea()
+	//if err != nil {
+	//	return publicKey, fmt.Errorf("malloc for return area failed: %w", err)
+	//}
+	//defer env.Free(retPtr, wasm.ReturnAreaSize)
 
 	strPtr, err := env.WriteString(data)
 	if err != nil {
@@ -46,16 +46,21 @@ func (publicKey PublicKey) FromString(env wasm.WasmEnv, data string, algorithm S
 	}
 	defer env.Free(strPtr, uint64(len(data)))
 
-	_, err = env.Call(function, retPtr, strPtr, uint64(len(data)), uint64(algorithm))
+	ret, err := env.Call(function, strPtr, uint64(len(data)), uint64(algorithm))
 
-	// Read result triple
-	valuePtr, err := env.GetPointee(retPtr)
-	if err != nil {
-		return publicKey, err
-	}
+	fmt.Println("err", err)
 
-	publicKey.ptr = valuePtr
+	fmt.Println(ret)
+
+	//// Read result triple
+	//valuePtr, err := env.GetPointee(retPtr)
+	//if err != nil {
+	//	return publicKey, err
+	//}
+
+	publicKey.ptr = ret[0]
 	publicKey.env = env
+	fmt.Println("publicKey.ptr", publicKey.ptr)
 	return publicKey, nil
 }
 

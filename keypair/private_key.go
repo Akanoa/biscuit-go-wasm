@@ -59,13 +59,13 @@ func (self *PrivateKey) FromString(data string) error {
 	defer self.env.Free(retPtr, wasm.ReturnAreaSize)
 
 	// Call: privatekey_fromString(out_ptr, str_ptr, str_len)
-	_, err = self.env.Call(function, retPtr, strPtr, uint64(len(data)))
+	ret, err := self.env.Call(function, retPtr, strPtr, uint64(len(data)))
 	if err != nil {
 		return fmt.Errorf("privatekey_fromString failed: %w", err)
 	}
 
 	// Read result triple
-	valuePtr, err := self.env.GetPointee(retPtr)
+	valuePtr, err := self.env.GetPointee(ret)
 	if err != nil {
 		return err
 	}

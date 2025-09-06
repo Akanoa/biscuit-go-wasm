@@ -35,13 +35,13 @@ func (authorizer Authorizer) Authorize() (uint64, error) {
 	returnPtr, err := authorizer.env.GetReturnArea()
 	defer authorizer.env.Free(returnPtr, wasm.ReturnAreaSize)
 
-	_, err = authorizer.env.Call(function, returnPtr, authorizer.ptr)
+	ret, err := authorizer.env.Call(function, returnPtr, authorizer.ptr)
 	if err != nil {
 		return 0, err
 	}
 
 	// Return the index of the matched policy
-	matchedPolicy, err := authorizer.env.GetPointee(returnPtr)
+	matchedPolicy, err := authorizer.env.GetPointee(ret)
 	if err != nil {
 		return 0, err
 	}

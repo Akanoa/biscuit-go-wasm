@@ -6,148 +6,83 @@ package wasm
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
-	"math"
-	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 )
+
+const OffsetJsidx = 128
 
 // taLen maps a synthesized typed-array handle (we use the byte offset as the handle)
 // to its length. This lets entropy functions and copy helpers know where and how
 // many bytes to read/write in guest memory.
 var taLen = map[uint32]uint32{}
 
-// externrefTableSize tracks the logical size of the wasm-bindgen externref table when hosted in Go.
-var externrefTableSize uint32
+// ExternrefTableSize tracks the logical size of the wasm-bindgen externref table when hosted in Go.
+var ExternrefTableSize uint32
 
 // ExternrefTableMirror mirrors the wasm-bindgen externref table so Go code can inspect entries.
 // Index 0 is reserved (undefined), and init seeds [undefined, null, true, false] similar to the JS glue.
 var ExternrefTableMirror []any
 
-// synthetic handles for JS-like singletons and typed arrays
-var (
-	globalObjHandle      uint32
-	cryptoObjHandle      uint32
-	memoryObjHandle      uint32
-	bufferObjHandle      uint32
-	functionNoArgsHandle uint32
-	// Start synthetic typed array handles in a high range to avoid colliding with wasm memory pointers
-	taHandleNext uint32 = 0x80000000
-	// taBuf stores JS-allocated typed array contents (not backed by wasm memory)
-	taBuf = map[uint32][]byte{}
-)
+var mapString = map[string]uint64{}
 
-var perfStart = time.Now()
+var memoryObjHandle uint32
 
-// JsNull is a sentinel type used to mirror JavaScript's `null` in the externref table.
+var globalObjHandle uint32
+
 type JsNull struct{}
 
-// InstantiateImportStubs inspects the compiled module and creates host modules for each imported module,
-// exporting no-op functions that match the imported function signatures. This satisfies imports such as
-// "__wbindgen_placeholder__" without needing to know exact names ahead of time.
+// instantiateImportStubs builds host modules to satisfy wasm-bindgen imports.
 func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazero.CompiledModule) error {
 	imports := c.ImportedFunctions()
 	if len(imports) == 0 {
 		return nil
 	}
 
-	// We will only implement real entropy providers from the Rust perspective,
-	// and refuse to generate generic stubs.
 	builders := map[string]wazero.HostModuleBuilder{}
 	for _, def := range imports {
 		modName, name, isImport := def.Import()
 		if !isImport {
 			continue
 		}
-		//fmt.Println("Importing module: ", modName, name)
-
-		if modName != "__wbindgen_placeholder__" && modName != "__wbindgen_externref_xform__" {
-			return fmt.Errorf("unsupported import module: %s.%s", modName, name)
-		}
-
-		// Ensure we have a builder for this module
+		//if modName != "__wbindgen_placeholder__" && modName != "__wbindgen_externref_xform__" && modName != "wbg" {
+		//	return fmt.Errorf("unsupported import module: %s.%s", modName, name)
+		//}
 		builder, ok := builders[modName]
 		if !ok {
 			builder = runtime.NewHostModuleBuilder(modName)
 			builders[modName] = builder
 		}
-
 		params := def.ParamTypes()
 		results := def.ResultTypes()
 
 		switch name {
 		case "__wbindgen_init_externref_table":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				fmt.Println("****************INIT****************")
+				fmt.Println("######################init externref table")
 				if len(ExternrefTableMirror) == 0 {
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
 				offset := uint32(len(ExternrefTableMirror))
-				for i := 0; i < 4; i++ {
+				for i := 0; i < OffsetJsidx+4; i++ {
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
-				ExternrefTableMirror[offset+0] = nil
-				ExternrefTableMirror[offset+1] = JsNull{}
-				ExternrefTableMirror[offset+2] = true
-				ExternrefTableMirror[offset+3] = false
+				ExternrefTableMirror[offset+0+OffsetJsidx] = nil
+				ExternrefTableMirror[offset+1+OffsetJsidx] = JsNull{}
+				ExternrefTableMirror[offset+2+OffsetJsidx] = true
+				ExternrefTableMirror[offset+3+OffsetJsidx] = false
+				ExternrefTableSize = uint32(len(ExternrefTableMirror))
 				_ = stack
 			}), params, results).Export(name)
-
-		// Basic externref operations
-		case "__wbindgen_object_clone_ref":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				// Return the same index (we don't enforce refcounts in Go host)
-				stack[0] = stack[0]
-			}), params, results).Export(name)
-		case "__wbindgen_object_drop_ref":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				// No-op drop. In a more complete impl we'd track refcounts.
-				_ = stack
-			}), params, results).Export(name)
-		case "__wbindgen_externref_heap_live_count":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror)))
-			}), params, results).Export(name)
-		case "__wbindgen_externref_table_grow":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				delta := api.DecodeU32(stack[0])
-				previousSize := uint32(len(ExternrefTableMirror))
-
-				// Grow the externref table by delta entries
-				for i := uint32(0); i < delta; i++ {
-					ExternrefTableMirror = append(ExternrefTableMirror, nil)
-				}
-
-				// Update the tracked size
-				externrefTableSize = uint32(len(ExternrefTableMirror))
-
-				// Return the previous size
-				stack[0] = api.EncodeU32(previousSize)
-			}), params, results).Export(name)
-
-		// Randomness helpers seen in wasm-bindgen glue
 		case "__wbg_randomFillSync_ac0988aba3254290", "__wbg_getRandomValues_b8f5dbd5f3995a9e":
-			// Signature in this wasm-bindgen glue: (param i32 i32) -> () where params are (obj_handle, typed_array_handle)
-			// We synthesize typed array handles equal to byte offsets into wasm memory and track their lengths.
 			fn := api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
 				mem := m.Memory()
-				_ = api.DecodeU32(stack[0]) // obj_handle not needed
+				_ = api.DecodeU32(stack[0])
 				arr := api.DecodeU32(stack[1])
 				ln := taLen[arr]
-				// If this handle refers to a JS-allocated buffer, fill that instead
-				if bufJS, ok := taBuf[arr]; ok {
-					if n, err := rand.Read(bufJS); err == nil {
-						if uint32(n) < uint32(len(bufJS)) {
-							for i := n; i < len(bufJS); i++ {
-								bufJS[i] = 0
-							}
-						}
-					}
-					return
-				}
-				// Otherwise, treat the handle as a wasm memory offset
 				if ln == 0 {
 					return
 				}
@@ -163,11 +98,9 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 			})
 			builder.NewFunctionBuilder().WithGoModuleFunction(fn, params, results).Export(name)
 		case "__wbindgen_copy_to_typed_array":
-			// Signature in WAT shows (param i32 i32 i32): (src_handle, src_len, dst_ptr)
-			// We don't have JS objects, so we ignore src_handle and fill dst_ptr with secure random bytes of length src_len.
 			fn := api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
 				mem := m.Memory()
-				_ = api.DecodeU32(stack[0]) // src_handle ignored
+				_ = api.DecodeU32(stack[0])
 				srcLen := api.DecodeU32(stack[1])
 				dstPtr := api.DecodeU32(stack[2])
 				if srcLen == 0 {
@@ -184,261 +117,79 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				}
 			})
 			builder.NewFunctionBuilder().WithGoModuleFunction(fn, params, results).Export(name)
-
-		// Type checks and constructors
-		case "__wbindgen_is_null":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				var v any
-				if idx < uint32(len(ExternrefTableMirror)) {
-					v = ExternrefTableMirror[idx]
-				}
-				_, isNull := v.(JsNull)
-				if isNull {
-					stack[0] = api.EncodeU32(1)
-				} else {
-					stack[0] = api.EncodeU32(0)
-				}
-			}), params, results).Export(name)
-		case "__wbindgen_is_undefined":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				var v any
-				if idx < uint32(len(ExternrefTableMirror)) {
-					v = ExternrefTableMirror[idx]
-				}
-				if v == nil {
-					stack[0] = api.EncodeU32(1)
-				} else {
-					stack[0] = api.EncodeU32(0)
-				}
-			}), params, results).Export(name)
-		case "__wbindgen_is_string":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				ok := idx < uint32(len(ExternrefTableMirror))
-				if ok {
-					_, ok = ExternrefTableMirror[idx].(string)
-				}
-				if ok {
-					stack[0] = api.EncodeU32(1)
-				} else {
-					stack[0] = api.EncodeU32(0)
-				}
-			}), params, results).Export(name)
-		case "__wbindgen_is_object":
-			// Treat maps/slices/structs as objects; we already return 1 above for general case but keep explicit.
+		case "__wbindgen_is_object", "__wbindgen_is_function":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				stack[0] = api.EncodeU32(1)
 			}), params, results).Export(name)
-		case "__wbindgen_number_new":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				// Single f64 param encoded in stack[0]
-				f := api.DecodeF64(stack[0])
-				if len(ExternrefTableMirror) == 0 {
-					ExternrefTableMirror = append(ExternrefTableMirror, nil)
-				}
-				ExternrefTableMirror = append(ExternrefTableMirror, f)
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
-			}), params, results).Export(name)
-
-		case "__wbindgen_number_get":
-			// Returns Option<f64> encoded as (f64, i32 is_some) in result slots.
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				var (
-					f      float64
-					isSome uint32
-				)
-				if int(idx) < len(ExternrefTableMirror) {
-					if v, ok := ExternrefTableMirror[idx].(float64); ok {
-						f = v
-						isSome = 1
-					}
-				}
-				stack[0] = api.EncodeF64(f)
-				stack[1] = api.EncodeU32(isSome)
-			}), params, results).Export(name)
-
-		case "__wbindgen_boolean_get":
-			// Returns 1 if true, else 0
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				ret := uint32(0)
-				if int(idx) < len(ExternrefTableMirror) {
-					if v, ok := ExternrefTableMirror[idx].(bool); ok && v {
-						ret = 1
-					}
-				}
-				stack[0] = api.EncodeU32(ret)
-			}), params, results).Export(name)
-
-		case "__wbg_isSafeInteger_343e2beeeece1bb0":
-			// Number.isSafeInteger(x)
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				ret := uint32(0)
-				const MaxSafe = 9007199254740991.0 // 2^53 - 1
-				if int(idx) < len(ExternrefTableMirror) {
-					if v, ok := ExternrefTableMirror[idx].(float64); ok {
-						if !math.IsNaN(v) {
-							abs := math.Abs(v)
-							if abs <= MaxSafe && math.Trunc(v) == v {
-								ret = 1
-							}
-						}
-					}
-				}
-				stack[0] = api.EncodeU32(ret)
-			}), params, results).Export(name)
-
 		case "__wbindgen_string_new":
-			// handled above
+			// Convert Rust string (ptr,len) to a JS handle (index) by storing it in the externref table mirror.
 			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
 				mem := m.Memory()
 				ptr := api.DecodeU32(stack[0])
 				ln := api.DecodeU32(stack[1])
+				var s string
+				idxString := uint64(len(ExternrefTableMirror)) + OffsetJsidx
+
+				// If the string is empty, return 0.
 				if ln == 0 {
 					stack[0] = api.EncodeU32(0)
 					return
 				}
+
+				// Read string from memory.
 				buf, ok := mem.Read(ptr, ln)
+
+				// If the read failed, return 0.
 				if !ok {
-					stack[0] = api.EncodeU32(0)
+					fmt.Println("failed to read string from memory")
 					return
 				}
+
+				// calculate hash of string
+				h := sha256.Sum256(buf)
+				key := fmt.Sprintf("---- %x", h)
+
+				// Ensure table has reserved 0 entry.
 				if len(ExternrefTableMirror) == 0 {
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
 				}
-				ExternrefTableMirror = append(ExternrefTableMirror, string(buf))
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
-			}), params, results).Export(name)
 
-		// Minimal JSON helpers
-		case "__wbindgen_json_parse":
-			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
-				mem := m.Memory()
-				ptr := api.DecodeU32(stack[0])
-				ln := api.DecodeU32(stack[1])
-				if buf, ok := mem.Read(ptr, ln); ok {
-					if len(ExternrefTableMirror) == 0 {
-						ExternrefTableMirror = append(ExternrefTableMirror, nil)
+				// search for string in map
+				if idx, ok := mapString[key]; ok {
+					if int(idx) < len(ExternrefTableMirror) && idx >= OffsetJsidx {
+						s = ExternrefTableMirror[idx].(string)
+						idxString = idx
+					} else {
+						// Index corruption detected, create new entry
+						s = string(buf)
+						idxString = uint64(len(ExternrefTableMirror)) + OffsetJsidx
+						ExternrefTableMirror = append(ExternrefTableMirror, s)
+						mapString[key] = idxString
 					}
-					// Store parsed JSON as string in externref mirror (minimal implementation).
-					ExternrefTableMirror = append(ExternrefTableMirror, string(buf))
-					stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
 				} else {
-					stack[0] = api.EncodeU32(0)
-				}
-			}), params, results).Export(name)
-		case "__wbindgen_json_serialize":
-			// Returns a WasmSlice (ptr,len) according to import signature; we rely on wazero to shape results.
-			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				var s string
-				if idx < uint32(len(ExternrefTableMirror)) {
-					if v, ok := ExternrefTableMirror[idx].(string); ok {
-						s = v
-					}
-				}
-				if s == "" {
-					stack[0] = api.EncodeU32(0)
-					stack[1] = api.EncodeU32(0)
-					return
-				}
-				_ = m // not used currently
-				// We cannot allocate guest memory from here safely; return zero slice.
-				stack[0] = api.EncodeU32(0)
-				stack[1] = api.EncodeU32(0)
-			}), params, results).Export(name)
+					s = string(buf)
+					idxString = uint64(len(ExternrefTableMirror)) + OffsetJsidx
+					ExternrefTableMirror = append(ExternrefTableMirror, s)
+					mapString[key] = idxString
 
-		// Typed array constructors: record length against byte offset and return that as handle
-		case "__wbindgen_uint8_array_new", "__wbindgen_uint8_clamped_array_new", "__wbindgen_uint16_array_new", "__wbindgen_uint32_array_new",
-			"__wbindgen_biguint64_array_new", "__wbindgen_int8_array_new", "__wbindgen_int16_array_new", "__wbindgen_int32_array_new",
-			"__wbindgen_bigint64_array_new", "__wbindgen_float32_array_new", "__wbindgen_float64_array_new":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				ptr := api.DecodeU32(stack[0])
-				ln := api.DecodeU32(stack[1])
-				taLen[ptr] = ln
-				stack[0] = api.EncodeU32(ptr)
-			}), params, results).Export(name)
+				}
 
-		case "__wbindgen_array_new":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				if len(ExternrefTableMirror) == 0 {
-					ExternrefTableMirror = append(ExternrefTableMirror, nil)
-				}
-				// Create and store a new empty array in the externref mirror.
-				ExternrefTableMirror = append(ExternrefTableMirror, []any{})
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
-			}), params, results).Export(name)
-		case "__wbindgen_array_push":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				arrIdx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				valIdx := api.DecodeU32(stack[1]) - 128 // Subtract JSIDX_OFFSET
-				if int(arrIdx) < len(ExternrefTableMirror) {
-					if s, ok := ExternrefTableMirror[arrIdx].([]any); ok {
-						var v any
-						if int(valIdx) < len(ExternrefTableMirror) {
-							v = ExternrefTableMirror[valIdx]
-						}
-						ExternrefTableMirror[arrIdx] = append(s, v)
-					}
-				}
-			}), params, results).Export(name)
+				ExternrefTableSize = uint32(uint64(len(ExternrefTableMirror)))
 
-		case "__wbindgen_not":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				idx := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				var truthy bool
-				if int(idx) < len(ExternrefTableMirror) {
-					switch v := ExternrefTableMirror[idx].(type) {
-					case bool:
-						truthy = v
-					case string:
-						truthy = v != ""
-					case float64:
-						truthy = v != 0
-					default:
-						truthy = v != nil
-					}
-				}
-				if truthy {
-					stack[0] = api.EncodeU32(0)
-				} else {
-					stack[0] = api.EncodeU32(1)
-				}
+				stack[0] = idxString
 			}), params, results).Export(name)
-
-		// Minimal equality helpers
-		case "__wbindgen_jsval_eq", "__wbindgen_jsval_loose_eq":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				a := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				b := api.DecodeU32(stack[1]) - 128 // Subtract JSIDX_OFFSET
-				var va, vb any
-				if int(a) < len(ExternrefTableMirror) {
-					va = ExternrefTableMirror[a]
-				}
-				if int(b) < len(ExternrefTableMirror) {
-					vb = ExternrefTableMirror[b]
-				}
-				if fmt.Sprintf("%v", va) == fmt.Sprintf("%v", vb) {
-					stack[0] = api.EncodeU32(1)
-				} else {
-					stack[0] = api.EncodeU32(0)
-				}
-			}), params, results).Export(name)
-
-		// Type checks default fallbacks
-		case "__wbindgen_is_function", "__wbindgen_is_array", "__wbindgen_is_symbol", "__wbindgen_is_bigint":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				// We don't model these precisely; return 0 (false) to be safe.
-				stack[0] = api.EncodeU32(0)
-			}), params, results).Export(name)
-
-		// Wazero-agnostic typed array slicing helpers present in upstream glue
+		//case "__wbg_require_60cc747a6bc5215a":
+		//	builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+		//		stack[0] = api.EncodeExternref(1)
+		//	}), params, results).Export(name)
+		//case "__wbg_newwithbyteoffsetandlength_d97e637ebe145a9a":
+		//	builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+		//		byteOffset := api.DecodeU32(stack[1])
+		//		length := api.DecodeU32(stack[2])
+		//		taLen[byteOffset] = length
+		//		stack[0] = api.EncodeU32(byteOffset)
+		//	}), params, results).Export(name)
 		case "__wbg_newwithbyteoffsetandlength_d97e637ebe145a9a":
-			// (param i32 i32 i32) (result i32): returns a synthesized handle equal to byte_offset and records length.
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				byteOffset := api.DecodeU32(stack[1])
 				length := api.DecodeU32(stack[2])
@@ -446,104 +197,120 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				stack[0] = api.EncodeU32(byteOffset)
 			}), params, results).Export(name)
 		case "__wbg_set_65595bdd868b3009":
-			// (param i32 i32 i32) -> copy from src_handle to dst_ptr using recorded length
 			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
 				mem := m.Memory()
-				// dst_array_handle := api.DecodeU32(stack[0]) // unused
 				srcHandle := api.DecodeU32(stack[1])
 				dstPtr := api.DecodeU32(stack[2])
-				// If source is a JS-allocated buffer, write it directly
-				if jsb, ok := taBuf[srcHandle]; ok {
-					_ = mem.Write(dstPtr, jsb)
-					return
-				}
-				// Otherwise, treat as a wasm memory-backed typed array
 				ln := taLen[srcHandle]
 				if ln == 0 {
 					return
 				}
+				// Check memory bounds before operations
+				memSize := mem.Size()
+				if srcHandle >= memSize || dstPtr >= memSize {
+					fmt.Printf("WARNING: __wbg_set memory bounds check failed - srcHandle:%d dstPtr:%d memSize:%d\n", srcHandle, dstPtr, memSize)
+					return
+				}
+				if srcHandle+ln > memSize || dstPtr+ln > memSize {
+					fmt.Printf("WARNING: __wbg_set buffer overflow check failed - operation would exceed memory bounds\n")
+					return
+				}
 				if buf, ok := mem.Read(srcHandle, ln); ok {
-					_ = mem.Write(dstPtr, buf)
+					if !mem.Write(dstPtr, buf) {
+						fmt.Printf("WARNING: __wbg_set memory write failed\n")
+					}
+				} else {
+					fmt.Printf("WARNING: __wbg_set memory read failed\n")
 				}
 			}), params, results).Export(name)
 		case "__wbg_subarray_aa9065fa9dc5df96":
-			// (param i32 i32 i32) (result i32): return a new handle = base+begin and record length = end-begin
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
 				base := api.DecodeU32(stack[0])
 				begin := api.DecodeU32(stack[1])
 				end := api.DecodeU32(stack[2])
+				newHandle := base + begin
 				var l uint32
 				if end >= begin {
 					l = end - begin
 				}
-				// If base is a JS-allocated buffer, create a new JS handle for the subarray
-				if buf, ok := taBuf[base]; ok {
-					start := int(begin)
-					stop := int(end)
-					if start < 0 {
-						start = 0
-					}
-					if stop > len(buf) {
-						stop = len(buf)
-					}
-					if stop < start {
-						stop = start
-					}
-					h := taHandleNext
-					taHandleNext++
-					taBuf[h] = buf[start:stop]
-					stack[0] = api.EncodeU32(h)
-					return
-				}
-				// Otherwise, treat base as a wasm memory offset and return adjusted offset
-				newHandle := base + begin
 				taLen[newHandle] = l
 				stack[0] = api.EncodeU32(newHandle)
 			}), params, results).Export(name)
+		case "__wbg_stack_0ed75d68575b0f3c":
+			// Extract stack trace from Error object and write to WASM memory
+			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
+				fmt.Println("****************wasm-bindgen stack")
 
-		// Newly added passthroughs required by issue
-		case "__wbg_performancenow_fd590e2decc0b71a":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				// Signature is (this: Performance) -> f64 milliseconds
-				if len(stack) > 0 {
-					_ = api.DecodeU32(stack[0]) // ignore receiver handle
-				}
-				elapsed := time.Since(perfStart)
-				stack[0] = api.EncodeF64(float64(elapsed) / float64(time.Millisecond))
-			}), params, results).Export(name)
-		case "__wbg_static_accessor_SELF_37c5d418e4bf5819", "__wbg_static_accessor_WINDOW_5de37043a91a9c40", "__wbg_static_accessor_GLOBAL_THIS_56578be7e9f832b0", "__wbg_static_accessor_GLOBAL_88a902d13a557d07":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				if globalObjHandle == 0 {
-					if len(ExternrefTableMirror) == 0 {
-						ExternrefTableMirror = append(ExternrefTableMirror, nil)
+				mem := m.Memory()
+				retPtr := api.DecodeU32(stack[0])
+				errorHandle := api.DecodeU32(stack[1])
+
+				fmt.Println("wasm-bindgen stack:", errorHandle)
+
+				// Get stack trace from error object in externref table
+				stackTrace := "Error stack trace not available"
+				adjustedHandle := errorHandle - OffsetJsidx
+				if adjustedHandle < uint32(len(ExternrefTableMirror)) {
+					if errObj := ExternrefTableMirror[adjustedHandle]; errObj != nil {
+						if errMap, ok := errObj.(map[string]any); ok {
+							if stackVal, exists := errMap["stack"]; exists {
+								if stackStr, ok := stackVal.(string); ok {
+									stackTrace = stackStr
+								}
+							}
+						}
+						// If no stack property, create a basic stack trace
+						if stackTrace == "Error stack trace not available" {
+							stackTrace = "Error: " + fmt.Sprintf("%v", errObj)
+						}
 					}
-					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "global"})
-					globalObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
 				}
-				stack[0] = api.EncodeU32(globalObjHandle)
-			}), params, results).Export(name)
-		case "__wbg_crypto_574e78ad8b13b65f":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				_ = api.DecodeU32(stack[0]) // global handle, ignored
-				if cryptoObjHandle == 0 {
-					if len(ExternrefTableMirror) == 0 {
-						ExternrefTableMirror = append(ExternrefTableMirror, nil)
+
+				// Allocate memory for the string and write it
+				strBytes := []byte(stackTrace)
+				strLen := uint32(len(strBytes))
+
+				// Find available memory space (simple allocation)
+				var strPtr uint32 = 0x10000 // Start at a safe offset
+				memSize := mem.Size()
+				for strPtr+strLen >= memSize {
+					strPtr += 0x1000 // Move to next page boundary
+					if strPtr > memSize {
+						strPtr = memSize - strLen
+						break
 					}
-					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "crypto"})
-					cryptoObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
 				}
-				stack[0] = api.EncodeU32(cryptoObjHandle)
+
+				// Write string to memory
+				if strPtr+strLen <= memSize {
+					mem.Write(strPtr, strBytes)
+				}
+
+				// Write pointer and length back to the result location
+				if retPtr+8 <= memSize {
+					// Write pointer at retPtr+0, length at retPtr+4
+					mem.WriteUint32Le(retPtr, strPtr)
+					mem.WriteUint32Le(retPtr+4, strLen)
+				}
+				fmt.Println("wasm-bindgen stack:", stackTrace)
+
 			}), params, results).Export(name)
-		case "__wbg_newwithlength_a381634e90c276d4":
-			// new Uint8Array(length) -> create a JS-allocated buffer and return a synthetic handle
+		case "__wbg_new_8a6f238a6ece86ea":
+			// Create a new Error object and return its handle
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				length := api.DecodeU32(stack[0])
-				h := taHandleNext
-				taHandleNext++
-				// allocate a JS-backed buffer and record its length
-				taBuf[h] = make([]byte, length)
-				taLen[h] = length
-				stack[0] = api.EncodeU32(h)
+				// Create a new error object in the externref table
+				if len(ExternrefTableMirror) == 0 {
+					ExternrefTableMirror = append(ExternrefTableMirror, nil)
+				}
+				// Create a new error object with stack property
+				errorObj := map[string]any{
+					"name":    "Error",
+					"message": "",
+					"stack":   "Error\n    at <anonymous>",
+				}
+				ExternrefTableMirror = append(ExternrefTableMirror, errorObj)
+				handle := uint32(len(ExternrefTableMirror)-1) + OffsetJsidx
+				stack[0] = api.EncodeU32(handle)
 			}), params, results).Export(name)
 		case "__wbindgen_memory":
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
@@ -552,83 +319,16 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 						ExternrefTableMirror = append(ExternrefTableMirror, nil)
 					}
 					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "memory"})
-					memoryObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
+					memoryObjHandle = uint32(len(ExternrefTableMirror)-1) + OffsetJsidx
 				}
 				stack[0] = api.EncodeU32(memoryObjHandle)
 			}), params, results).Export(name)
-		case "__wbg_buffer_609cc3eee51ed158":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				_ = api.DecodeU32(stack[0]) // memory handle, ignored
-				if bufferObjHandle == 0 {
-					if len(ExternrefTableMirror) == 0 {
-						ExternrefTableMirror = append(ExternrefTableMirror, nil)
-					}
-					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "buffer"})
-					bufferObjHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
-				}
-				stack[0] = api.EncodeU32(bufferObjHandle)
-			}), params, results).Export(name)
-		case "__wbg_new_a12002a7f91c75be", "__wbg_new_405e22f390576ce2", "__wbg_new_78feb108b6472713":
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				if len(ExternrefTableMirror) == 0 {
-					ExternrefTableMirror = append(ExternrefTableMirror, nil)
-				}
-				ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{})
-				stack[0] = api.EncodeU32(uint32(len(ExternrefTableMirror) - 1) + 128) // Add JSIDX_OFFSET
-			}), params, results).Export(name)
-		case "__wbg_set_3f1d0b984ed272ed", "__wbg_set_37837023f3d740e8":
-			// Reflect.set(target, key, value) -> bool
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				target := api.DecodeU32(stack[0]) - 128 // Subtract JSIDX_OFFSET
-				key := api.DecodeU32(stack[1]) - 128    // Subtract JSIDX_OFFSET
-				val := api.DecodeU32(stack[2]) - 128    // Subtract JSIDX_OFFSET
-				ok := uint32(0)
-				if int(target) < len(ExternrefTableMirror) {
-					obj := ExternrefTableMirror[target]
-					var k string
-					if int(key) < len(ExternrefTableMirror) {
-						if ks, is := ExternrefTableMirror[key].(string); is {
-							k = ks
-						}
-					}
-					if m, is := obj.(map[string]any); is && k != "" {
-						var v any
-						if int(val) < len(ExternrefTableMirror) {
-							v = ExternrefTableMirror[val]
-						}
-						m[k] = v
-						ok = 1
-					}
-				}
-				stack[0] = api.EncodeU32(ok)
-			}), params, results).Export(name)
-		case "__wbg_newnoargs_105ed471475aaf50":
-			// new Function(code)
-			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
-				mem := m.Memory()
-				ptr := api.DecodeU32(stack[0])
-				ln := api.DecodeU32(stack[1])
-				_, _ = mem.Read(ptr, ln) // ignore code
-				if functionNoArgsHandle == 0 {
-					if len(ExternrefTableMirror) == 0 {
-						ExternrefTableMirror = append(ExternrefTableMirror, nil)
-					}
-					ExternrefTableMirror = append(ExternrefTableMirror, "function() { /* noop */ }")
-					functionNoArgsHandle = uint32(len(ExternrefTableMirror) - 1) + 128 // Add JSIDX_OFFSET
-				}
-				stack[0] = api.EncodeU32(functionNoArgsHandle)
-			}), params, results).Export(name)
-		case "__wbg_call_672a4d21634d4a24":
-			// f.call(thisArg, ...)
-			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				// No-op; return default/zero based on expected results
-				_ = stack
-			}), params, results).Export(name)
-
 		case "__wbindgen_throw":
 			// wasm-bindgen uses this to throw JS exceptions. Do NOT panic; capture the message in the externref table
 			// so callers can retrieve it via GetError without trapping the runtime.
 			builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
+				fmt.Println("****************wasm-bindgen throw")
+
 				mem := m.Memory()
 				ptr := api.DecodeU32(stack[0])
 				ln := api.DecodeU32(stack[1])
@@ -638,6 +338,9 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 						msg = string(buf)
 					}
 				}
+
+				fmt.Println("wasm-bindgen throw:", msg)
+
 				// Store the message as a new externref entry for later retrieval by host code.
 				if len(ExternrefTableMirror) == 0 {
 					ExternrefTableMirror = append(ExternrefTableMirror, nil)
@@ -645,19 +348,78 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, c wazer
 				ExternrefTableMirror = append(ExternrefTableMirror, msg)
 				// Do not panic: simply return to let the guest continue or handle error paths.
 			}), params, results).Export(name)
-		default:
-			// Passthrough default: export a function matching the signature that leaves inputs/results unchanged or zeroed.
-			// We avoid special-casing stub names; any unrecognized import gets a no-op implementation.
+		case "__wbg_static_accessor_SELF_37c5d418e4bf5819":
+			// Static accessor for 'self' global object
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				// By default, do nothing. Wazero pre-zeros the stack slots for results, so this acts as a safe passthrough.
-				// Intentionally no logging here to keep library output clean.
-				fmt.Println("-----------WARNING: unrecognized import", name)
+				if globalObjHandle == 0 {
+					if len(ExternrefTableMirror) == 0 {
+						ExternrefTableMirror = append(ExternrefTableMirror, nil)
+					}
+					ExternrefTableMirror = append(ExternrefTableMirror, map[string]any{"__kind": "global"})
+					globalObjHandle = uint32(len(ExternrefTableMirror)-1) + OffsetJsidx
+				}
+				stack[0] = api.EncodeU32(globalObjHandle)
+			}), params, results).Export(name)
+		case "__wbindgen_object_clone_ref":
+			// Clone an object reference - return the same handle since Go manages memory automatically
+			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+				handle := api.DecodeU32(stack[0])
+				// In a JavaScript environment, this would increment a reference count
+				// In Go, we just return the same handle since Go's GC handles object lifetime
+				stack[0] = api.EncodeU32(handle)
+			}), params, results).Export(name)
+		default:
+			fmt.Println("unsupported import:", modName, name)
+			if modName == "__wbindgen_externref_xform__" {
+				switch name {
+				case "__wbindgen_externref_table_grow":
+					builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+						n := api.DecodeU32(stack[0])
+						if n > 10000 { // Prevent excessive allocation
+							fmt.Printf("WARNING: externref_table_grow requested %d entries, limiting to 10000\n", n)
+							n = 10000
+						}
+						prev := uint32(len(ExternrefTableMirror))
+						for i := uint32(0); i < n; i++ {
+							ExternrefTableMirror = append(ExternrefTableMirror, nil)
+						}
+						ExternrefTableSize = uint32(len(ExternrefTableMirror))
+						stack[0] = api.EncodeU32(prev + OffsetJsidx)
+					}), params, results).Export(name)
+				case "__wbindgen_externref_table_set_null":
+					builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+						idx := api.DecodeU32(stack[0])
+						actualIdx := idx + OffsetJsidx
+						if actualIdx < uint32(len(ExternrefTableMirror)) && actualIdx >= OffsetJsidx {
+							ExternrefTableMirror[actualIdx] = JsNull{}
+						} else {
+							fmt.Printf("WARNING: externref_table_set_null invalid index %d (actual %d, table size %d)\n", idx, actualIdx, len(ExternrefTableMirror))
+						}
+					}), params, results).Export(name)
+				default:
+					builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+						fmt.Println("externref_xform", name)
+						_ = stack
+					}), params, results).Export(name)
+				}
+				continue
+			}
+			// Default no-op for other imports (object_drop_ref, clone_ref, etc.)
+			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+				fmt.Println("default import", name)
 				_ = stack
 			}), params, results).Export(name)
 		}
 	}
 
-	// Instantiate each supported host module.
+	// Some externref call helpers expected on module "wbg".
+	if _, ok := builders["wbg"]; !ok {
+		builders["wbg"] = runtime.NewHostModuleBuilder("wbg")
+	}
+	b := builders["wbg"]
+	b.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) { _ = stack }), []api.ValueType{api.ValueTypeExternref, api.ValueTypeExternref, api.ValueTypeExternref}, []api.ValueType{api.ValueTypeExternref}).Export("__wbg_call_7cccdd69e0791ae2")
+	b.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) { _ = stack }), []api.ValueType{api.ValueTypeExternref, api.ValueTypeExternref}, []api.ValueType{api.ValueTypeExternref}).Export("__wbg_call_672a4d21634d4a24")
+
 	for modName, b := range builders {
 		if _, err := b.Instantiate(ctx); err != nil {
 			return fmt.Errorf("failed to instantiate host module %q: %w", modName, err)

@@ -53,16 +53,21 @@ func (builder *BiscuitBuilder) Build(privateKey keypair.PrivateKey) (token.Biscu
 		return token.Biscuit{}, err
 	}
 
-	returnPtr, err := builder.env.GetReturnArea()
-	defer builder.env.Free(returnPtr, wasm.ReturnAreaSize)
+	//returnPtr, err := builder.env.GetReturnArea()
+	//defer func() {
+	//	err = builder.env.Free(returnPtr, wasm.ReturnAreaSize)
+	//	if err != nil {
+	//		slog.Error("biscuitbuilder_build failed", slog.Any("err", err))
+	//	}
+	//}()
 
-	_, err = builder.env.Call(function, returnPtr, builder.ptr, privateKey.Ptr())
+	ret, err := builder.env.Call(function, builder.ptr, privateKey.Ptr())
 	if err != nil {
 		slog.Error("biscuitbuilder_build failed", slog.Any("err", err))
 		return token.Biscuit{}, err
 	}
 
-	valuePtr, err := builder.env.GetPointee(returnPtr)
+	valuePtr, err := builder.env.GetPointee(ret)
 	if err != nil {
 		slog.Error("biscuitbuilder_build failed, unable to get return value", slog.Any("err", err))
 		return token.Biscuit{}, err
@@ -94,15 +99,19 @@ func (builder *BiscuitBuilder) AddCode(code string) error {
 	}
 	defer builder.env.Free(returnPtr, wasm.ReturnAreaSize)
 
-	_, err = builder.env.Call(function, returnPtr, builder.ptr, strPtr, uint64(len(code)))
+	ret, err := builder.env.Call(function, builder.ptr, strPtr, uint64(len(code)))
 	if err != nil {
 		return fmt.Errorf("biscuitbuilder_addCode failed: %w", err)
 	}
 
-	// Inspect the Result in the return area to surface parser errors immediately.
-	if _, err := builder.env.GetPointee(returnPtr); err != nil {
-		return fmt.Errorf("biscuitbuilder_addCode error: %w", err)
+	if ret[1] != 0 {
+		return fmt.Errorf("biscuitbuilder_addCode failed: %w", err)
 	}
+
+	//// Inspect the Result in the return area to surface parser errors immediately.
+	//if _, err := builder.env.GetPointee(ret); err != nil {
+	//	return fmt.Errorf("biscuitbuilder_addCode error: %w", err)
+	//}
 	return nil
 }
 

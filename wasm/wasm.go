@@ -19,7 +19,8 @@ import (
 	"biscuit-wasm-go/utils"
 )
 
-const defaultWasmRelPath = "target/wasm32-unknown-unknown/release/biscuit_wasm_go.wasm"
+// const defaultWasmRelPath = "target/wasm32-unknown-unknown/release/biscuit_wasm_go.wasm"
+const defaultWasmRelPath = "pkg/biscuit_wasm_go_bg.wasm"
 
 // WasmEnv wraps a wazero Module and its context, exposing convenience methods to
 // find exports and call them, and to manage the common memory patterns used by
@@ -109,20 +110,36 @@ func InitWasm() (WasmEnv, error) {
 		return WasmEnv{}, err
 	}
 
-	return WasmEnv{
+	wasmEnv := WasmEnv{
 		Ctx:    ctx,
 		Module: module,
-	}, nil
+	}
+
+	function, err := wasmEnv.GetFunction("__wbindgen_start")
+	if err != nil {
+		panic("wasm start function not found")
+	}
+	res, err := wasmEnv.Call(function)
+	if err != nil {
+		fmt.Printf("wasm start function failed: %v\n", err)
+		panic("wasm start function failed")
+	}
+	fmt.Printf("wasm start function result: %v\n", res)
+
+	return wasmEnv, nil
+
 }
+
+const alignedSize = 8
 
 func (env WasmEnv) Free(ptr uint64, length uint64) error {
 	free, err := env.GetFunction("__wbindgen_free")
-	fmt.Printf("ptr %x free: %v\n", ptr, length)
+	fmt.Printf("align %d ptr %x free: %v\n", alignedSize, ptr, length)
 	if err != nil {
 		slog.Error("exported function not found", slog.String("name", "__wbindgen_free"))
 		return err
 	}
-	_, err = env.Call(free, ptr, length, 4)
+	_, err = env.Call(free, ptr, length, alignedSize)
 	return err
 }
 
@@ -132,7 +149,7 @@ func (env WasmEnv) Malloc(length uint64) (uint64, error) {
 		slog.Error("exported function not found", slog.String("name", "__wbindgen_malloc"))
 		return 0, err
 	}
-	results, err := env.Call(malloc, length, 4)
+	results, err := env.Call(malloc, length, alignedSize)
 	if err != nil {
 		slog.Error("malloc failed", slog.Any("err", err))
 		return 0, err
@@ -143,7 +160,7 @@ func (env WasmEnv) Malloc(length uint64) (uint64, error) {
 		return 0, fmt.Errorf("malloc failed: unexpected return value")
 	}
 
-	fmt.Printf("malloc: %x length %d\n", results[0], length)
+	fmt.Printf("malloc: align %d ptr %x length %d\n", alignedSize, results[0], length)
 
 	return results[0], nil
 }
@@ -169,6 +186,8 @@ func (env WasmEnv) Malloc(length uint64) (uint64, error) {
 //
 // ptr (input parameter)
 func (env WasmEnv) GetStringValueFromPointer(ptr uint64) (string, error) {
+
+	fmt.Printf("GetStringValueFromPointer: ptr %x\n", ptr)
 
 	bytesData, err := env.GetBytesValueFromPointer(ptr)
 	if err != nil {
@@ -212,9 +231,13 @@ func (env WasmEnv) GetBytesValueFromPointer(ptr uint64) ([]byte, error) {
 	errPtr := binary.LittleEndian.Uint32(buf[8:12])
 	isErr := int32(binary.LittleEndian.Uint32(buf[12:16]))
 
+	fmt.Printf("bytesPtr: %x bytesLen: %d errPtr: %x isErr: %d\n", bytesPtr, bytesLen, errPtr, isErr)
+
 	if isErr != 0 {
 		serr, err := env.GetError(uint64(errPtr))
 		if err != nil {
+
+			fmt.Printf("----------")
 			return nil, fmt.Errorf("cannot get error string: %w", err)
 		}
 		return nil, errors.New(serr)
@@ -222,6 +245,13 @@ func (env WasmEnv) GetBytesValueFromPointer(ptr uint64) ([]byte, error) {
 
 	// get bytes from memory
 	bytesData, ok := mem.Read(bytesPtr, bytesLen)
+
+	if !ok {
+		slog.Error("cannot read bytes from memory")
+		return nil, fmt.Errorf("cannot read bytes from memory")
+	}
+
+	fmt.Printf("bytesData: %v\n", bytesData)
 
 	return bytesData, nil
 }
@@ -347,8 +377,11 @@ func (env WasmEnv) WriteBytes(bytes []byte) (uint64, error) {
 
 	// Write bytes into memory
 	if ok := mem.Write(uint32(strPtr), bytes); !ok {
-		_ = env.Free(strPtr, uint64(len(bytes)))
-		return 0, fmt.Errorf("cannot write string bytes to wasm memory")
+		err := env.Free(strPtr, uint64(len(bytes)))
+		if !ok {
+			fmt.Printf("cannot free string bytes: %v\n", err)
+		}
+		return 0, fmt.Errorf("cannot write bytes to wasm memory")
 	}
 
 	return strPtr, nil
@@ -403,7 +436,7 @@ func (env WasmEnv) GetStringArea() (uint64, error) {
 
 // GetPointee returns the value pointed to by the given pointer.
 // The pointer is expected to point to a return area.
-func (env WasmEnv) GetPointee(ptr uint64) (uint64, error) {
+func (env WasmEnv) GetPointee_old(ptr uint64) (uint64, error) {
 	mem := env.Module.Memory()
 
 	// Read result triple
@@ -414,6 +447,28 @@ func (env WasmEnv) GetPointee(ptr uint64) (uint64, error) {
 	valuePtr := binary.LittleEndian.Uint32(buf[0:4])
 	errPtr := binary.LittleEndian.Uint32(buf[4:8])
 	isErr := int32(binary.LittleEndian.Uint32(buf[8:12]))
+
+	if isErr != 0 {
+		serr, err := env.GetError(uint64(errPtr))
+		if err != nil {
+			return 0, fmt.Errorf("cannot get error string: %w", err)
+		}
+		return 0, errors.New(serr)
+	}
+
+	return uint64(valuePtr), nil
+}
+
+// GetPointee returns the value pointed to by the given pointer.
+// The pointer is expected to point to a return area.
+func (env WasmEnv) GetPointee(ret []uint64) (uint64, error) {
+
+	fmt.Printf("GetPointee: ret: %v\n", ret)
+
+	// Read result triple
+	valuePtr := ret[0]
+	errPtr := ret[1]
+	isErr := ret[2]
 
 	if isErr != 0 {
 		serr, err := env.GetError(uint64(errPtr))

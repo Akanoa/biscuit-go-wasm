@@ -66,12 +66,12 @@ func (builder *AuthorizerBuilder) Build(biscuit token.Biscuit) (authorizer.Autho
 	}
 	defer builder.env.Free(returnPtr, wasm.ReturnAreaSize)
 
-	_, err = builder.env.Call(function, returnPtr, builder.ptr, biscuit.Ptr())
+	ret, err := builder.env.Call(function, returnPtr, builder.ptr, biscuit.Ptr())
 	if err != nil {
 		return authorizer.Authorizer{}, err
 	}
 
-	valuePtr, gErr := builder.env.GetPointee(returnPtr)
+	valuePtr, gErr := builder.env.GetPointee(ret)
 	if gErr != nil {
 		slog.Error("authorizerbuilder_buildAuthenticated failed, unable to get return value", slog.Any("err", gErr))
 		return authorizer.Authorizer{}, gErr

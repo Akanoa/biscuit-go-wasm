@@ -27,7 +27,7 @@ func (biscuit Biscuit) Ptr() uint64 {
 
 // ToStringWasmFunction returns the name of the WASM function used to convert the Biscuit to a string.
 func (biscuit Biscuit) ToStringWasmFunction() string {
-	return "biscuit_toBase64"
+	return "biscuit_to_base64"
 }
 
 // ToBase64 returns the string representation of the Biscuit.
@@ -42,37 +42,39 @@ func (biscuit Biscuit) ToBase64() (string, error) {
 // FromBase64 creates a new Biscuit from a base64 string.
 func (biscuit Biscuit) FromBase64(env wasm.WasmEnv, biscuitBase64 string, publicKey keypair.PublicKey) (Biscuit, error) {
 
-	function, err := env.GetFunction("biscuit_fromBase64")
+	returnArea, err := env.GetReturnArea()
 	if err != nil {
 		return Biscuit{}, err
 	}
 
+	fmt.Println(biscuitBase64)
+	fmt.Println(publicKey.Ptr())
+	fmt.Println(len(biscuitBase64))
+
 	// Write the base64 string into wasm memory and pass (ptr, len)
-	strPtr, err := env.WriteString(biscuitBase64)
+	strPtr, err := env.WriteBytesToWasm([]byte(biscuitBase64))
 	if err != nil {
-		return Biscuit{}, fmt.Errorf("cannot write base64 to wasm memory: %w", err)
+		return Biscuit{}, err
 	}
 	defer env.Free(strPtr, uint64(len(biscuitBase64)))
 
-	returnPtr, err := env.GetReturnArea()
-	if err != nil {
-		return Biscuit{}, err
-	}
-	defer env.Free(returnPtr, wasm.ReturnAreaSize)
+	fmt.Println(strPtr)
+	fmt.Println(len(biscuitBase64))
 
-	ret, err := env.Call(function, strPtr, uint64(len(biscuitBase64)), publicKey.Ptr())
+	_, err = env.Call("biscuit_from_base64", returnArea, strPtr, uint64(len(biscuitBase64)), publicKey.Ptr())
 	if err != nil {
 		return Biscuit{}, fmt.Errorf("biscuit_fromBase64 failed: %w", err)
 	}
 
-	valuePtr, err := env.GetPointee(ret)
+	ptr, err := env.ResultPointer(returnArea)
 
 	if err != nil {
+		fmt.Println(err)
 		return Biscuit{}, err
 	}
 
 	biscuit.env = env
-	biscuit.ptr = valuePtr
+	biscuit.ptr = ptr
 	return biscuit, nil
 }
 
@@ -82,73 +84,48 @@ func (biscuit Biscuit) ToBytes() ([]byte, error) {
 		return nil, fmt.Errorf("token not initialized")
 	}
 
-	function, err := biscuit.env.GetFunction("biscuit_toBytes")
+	returnArea, err := biscuit.env.GetReturnArea()
 	if err != nil {
 		return nil, err
 	}
 
-	returnPtr, err := biscuit.env.GetReturnArea()
-	defer biscuit.env.Free(returnPtr, wasm.ReturnAreaSize)
-
-	_, err = biscuit.env.Call(function, biscuit.ptr)
+	_, err = biscuit.env.Call("biscuit_to_bytes", returnArea, biscuit.ptr)
 	if err != nil {
 		return nil, err
 	}
 
-	return biscuit.env.GetBytesValueFromPointer(returnPtr)
-}
+	return biscuit.env.ResultBytes(returnArea)
 
-// PadToMultipleOf4 renvoie une nouvelle slice dont la taille est un multiple de 4
-func PadToMultipleOf4(data []byte) []byte {
-	n := len(data)
-	remainder := n % 8
-	if remainder == 0 {
-		return data // Déjà multiple de 4
-	}
-	padding := 4 - remainder
-	padded := make([]byte, n+padding)
-	copy(padded, data)
-	// Les octets restants sont automatiquement 0
-	return padded
 }
 
 // FromBytes creates a new Biscuit from a byte slice.
 func (biscuit Biscuit) FromBytes(env wasm.WasmEnv, bytes []byte, publicKey keypair.PublicKey) (Biscuit, error) {
 
-	function, err := env.GetFunction("biscuit_fromBytes")
+	returnArea, err := env.GetReturnArea()
 	if err != nil {
 		return Biscuit{}, err
 	}
 
-	dataPtr, err := env.WriteBytes(bytes)
-	fmt.Printf("----ptr %x data: %v\n", dataPtr, bytes)
+	// Write the base64 string into wasm memory and pass (ptr, len)
+	strPtr, err := env.WriteBytesToWasm(bytes)
 	if err != nil {
 		return Biscuit{}, err
 	}
-	defer func() {
-		fmt.Println("free bytes")
-		err := env.Free(dataPtr, uint64(len(bytes)))
-		if err != nil {
-			fmt.Printf("cannot free bytes: %v\n", err)
-		}
+	defer env.Free(strPtr, uint64(len(bytes)))
 
-	}()
-
-	fmt.Println("BEFORE")
-	ret, err := env.Call(function, dataPtr, uint64(len(bytes)), publicKey.Ptr())
-
-	fmt.Println("ret", ret)
-	fmt.Println("err", err)
-
+	_, err = env.Call("biscuit_from_bytes", returnArea, strPtr, uint64(len(bytes)), publicKey.Ptr())
 	if err != nil {
-		fmt.Printf("error: %v\n", err)
-		return Biscuit{}, err
+		return Biscuit{}, fmt.Errorf("biscuit_fromBase64 failed: %w", err)
 	}
-	fmt.Println("AFTER")
+
+	ptr, err := env.ResultPointer(returnArea)
 
 	if err != nil {
 		return Biscuit{}, err
 	}
-	return Biscuit{}.New(env, ret[0]), nil
+
+	biscuit.env = env
+	biscuit.ptr = ptr
+	return biscuit, nil
 
 }

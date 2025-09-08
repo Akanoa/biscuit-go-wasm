@@ -6,7 +6,6 @@ import (
 	"biscuit-wasm-go/shared"
 	"biscuit-wasm-go/wasm"
 	"fmt"
-	"log/slog"
 )
 
 // PublicKey represents a WASM public key.
@@ -17,7 +16,7 @@ type PublicKey struct {
 
 // ToStringWasmFunction returns the name of the WASM function that converts the PublicKey to its string representation.
 func (publicKey PublicKey) ToStringWasmFunction() string {
-	return "publickey_toString"
+	return "public_key_to_hex"
 }
 
 // Ptr returns the pointer to the underlying WASM object.
@@ -28,39 +27,27 @@ func (public_key PublicKey) Ptr() uint64 {
 // FromString initializes a PublicKey from a string and a given SignatureAlgorithm using a Wasm environment.
 // Returns the initialized PublicKey or an error in case of failure.
 func (publicKey PublicKey) FromString(env wasm.WasmEnv, data string, algorithm SignatureAlgorithm) (PublicKey, error) {
-	function, err := env.GetFunction("publickey_fromString")
+
+	returnArea, err := env.GetReturnArea()
 	if err != nil {
-		slog.Error("exported function 'publickey_fromString' not found")
-		return publicKey, err
+		return PublicKey{}, err
 	}
 
-	//retPtr, err := env.GetReturnArea()
-	//if err != nil {
-	//	return publicKey, fmt.Errorf("malloc for return area failed: %w", err)
-	//}
-	//defer env.Free(retPtr, wasm.ReturnAreaSize)
-
-	strPtr, err := env.WriteString(data)
+	strPtr, err := env.WriteBytesToWasm([]byte(data))
 	if err != nil {
-		return publicKey, fmt.Errorf("cannot write string to wasm memory: %w", err)
+		return PublicKey{}, err
 	}
-	defer env.Free(strPtr, uint64(len(data)))
 
-	ret, err := env.Call(function, strPtr, uint64(len(data)), uint64(algorithm))
+	// Call: publickey_fromString(out_ptr, str_ptr, str_len)
+	_, err = env.Call("public_key_from_hex", returnArea, strPtr, uint64(len(data)), uint64(algorithm))
 
-	fmt.Println("err", err)
+	ptr, err := env.ResultPointer(returnArea)
+	if err != nil {
+		return PublicKey{}, err
+	}
 
-	fmt.Println(ret)
-
-	//// Read result triple
-	//valuePtr, err := env.GetPointee(retPtr)
-	//if err != nil {
-	//	return publicKey, err
-	//}
-
-	publicKey.ptr = ret[0]
+	publicKey.ptr = ptr
 	publicKey.env = env
-	fmt.Println("publicKey.ptr", publicKey.ptr)
 	return publicKey, nil
 }
 

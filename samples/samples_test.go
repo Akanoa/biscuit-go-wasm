@@ -161,8 +161,11 @@ func CheckSample(root_key keypair.PublicKey, c TestCase, t *testing.T) {
 			//CompareBlocks(token, c.Token, t)
 		}
 
+		i := 0
 		for _, v := range c.Validations {
+			fmt.Printf("  Checking validation %d\n", i)
 			CompareResult(c.Filename, token, v, t)
+			i++
 		}
 
 	} else {
@@ -206,15 +209,20 @@ func CompareResult(filename string, token token2.Biscuit, v Validation, t *testi
 	authorizerBuilder, err := builder.AuthorizerBuilder{}.New(env)
 	require.NoError(t, err)
 
+	fmt.Println(v.AuthorizerCode)
+
 	err = authorizerBuilder.AddCode(v.AuthorizerCode)
 	require.NoError(t, err)
 
 	authorizer, err := authorizerBuilder.Build(token)
 
+	fmt.Println(authorizer.ToString())
+
 	if err != nil {
 		CompareError(err, v.Result.Err, t)
 	} else {
 		_, err = authorizer.Authorize()
+		fmt.Println(err)
 		if err != nil {
 			CompareError(err, v.Result.Err, t)
 		} else {
@@ -230,23 +238,23 @@ func CompareResult(filename string, token token2.Biscuit, v Validation, t *testi
 	}
 }
 
-func CompareError(authorization_error error, sample_error *BiscuitError, t *testing.T) {
-	error_string := authorization_error.Error()
-	if sample_error.Format != nil {
-		require.Equal(t, error_string, "biscuit: invalid signature")
-	} else if sample_error.FailedLogic != nil {
-		if sample_error.FailedLogic.Unauthorized != nil {
+func CompareError(authorizationError error, sampleError *BiscuitError, t *testing.T) {
+	errorString := authorizationError.Error()
+	if sampleError.Format != nil {
+		require.Equal(t, errorString, "biscuit: invalid signature")
+	} else if sampleError.FailedLogic != nil {
+		if sampleError.FailedLogic.Unauthorized != nil {
 			// todo check the block and check ids (if there is a single failed check, because the lib only reports one)
-			require.Regexp(t, "^biscuit: verification failed: failed to verify", error_string)
-		} else if sample_error.FailedLogic.InvalidBlockRule != nil {
+			require.Regexp(t, "^biscuit: verification failed: failed to verify", errorString)
+		} else if sampleError.FailedLogic.InvalidBlockRule != nil {
 			// todo extract the block number
-			require.Regexp(t, "^biscuit: verification failed: failed to verify", error_string)
+			require.Regexp(t, "^biscuit: verification failed: failed to verify", errorString)
 		} else {
-			require.Fail(t, error_string)
+			require.Fail(t, errorString)
 		}
 	} else {
-		fmt.Println(sample_error)
-		require.Fail(t, error_string)
+		fmt.Println(sampleError)
+		require.Fail(t, errorString)
 	}
 }
 
@@ -257,11 +265,11 @@ func TestReadSamples(t *testing.T) {
 	err = json.Unmarshal(b, &samples)
 	require.NoError(t, err)
 
-	root_key, err := keypair.PublicKey{}.FromString(env, samples.RootPublicKey, keypair.Ed25519)
+	rootKey, err := keypair.PublicKey{}.FromString(env, samples.RootPublicKey, keypair.Ed25519)
 	require.NoError(t, err)
 	fmt.Printf("Checking %d samples\n", len(samples.TestCases))
 	for _, v := range samples.TestCases {
-		t.Run(v.Filename, func(t *testing.T) { CheckSample(root_key, v, t) })
+		t.Run(v.Filename, func(t *testing.T) { CheckSample(rootKey, v, t) })
 	}
 
 }

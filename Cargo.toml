@@ -4,19 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-serde = { version = "1.0.219", features = ["derive"] }
-wasm-bindgen = "0.2.100"
-biscuit-wasm = {git = "https://github.com/eclipse-biscuit/biscuit-wasm.git", rev = "2dc0467c07d85f8044bbb202c79a724f9aa8a1d7"}
-serde-wasm-bindgen = "0.6.5"
-#biscuit-wasm = {path = "/home/noa/Documents/projects/rust/biscuit-wasm"}
+biscuit-auth = { version = "6.0.0", features = ["wasm", "serde-error"] }
+getrandom = { version = "0.2.8", features = ["custom"] }
+serde_json = "1.0.143"
+rand = "0.8.5"
 
-[profile.dev]
-panic = "abort"
 
 [profile.release]
 panic = "abort"
-debug = true
-#debug-assertions = true

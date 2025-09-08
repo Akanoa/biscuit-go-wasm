@@ -1,25 +1,28 @@
-pub use biscuit_wasm::*;
-use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::wasm_bindgen;
-use wasm_bindgen::JsValue;
+extern crate alloc;
+extern crate core;
 
-#[derive(Deserialize, Serialize, Debug, Default)]
-pub struct RunLimits {
-    pub max_facts: Option<u64>,
-    pub max_iterations: Option<u64>,
-    pub max_time_micro: Option<u64>,
+mod wasm_result;
+mod allocation;
+mod wasm_export;
+mod crypto;
+mod builder;
+mod token;
+
+#[allow(unused)]
+pub(crate) fn make_rng() -> rand::rngs::StdRng {
+    let mut data = [0u8; 8];
+    getrandom::getrandom(&mut data[..]).unwrap();
+    rand::SeedableRng::seed_from_u64(u64::from_le_bytes(data))
 }
 
-#[wasm_bindgen(js_name = publickey_ToString)]
-pub fn public_key_to_string(public_key: &PublicKey) -> Result<String, JsValue> {
-    Ok(public_key.to_string())
+unsafe extern "C" {
+    pub fn print(ptr: *const u8, len: usize);
 }
 
-#[wasm_bindgen(js_name = authorizer_getRunLimits)]
-pub fn run_limits(max_execution_time: u64) -> JsValue {
-    let run_limits = RunLimits {
-        max_time_micro: Some(max_execution_time),
-        ..RunLimits::default()
+#[macro_export]
+macro_rules! print_wasm {
+    ($($args:tt)*) => {
+        let msg = format!($($args)*);
+        unsafe { print(msg.as_ptr(), msg.len()) };
     };
-    serde_wasm_bindgen::to_value(&run_limits).unwrap()
 }

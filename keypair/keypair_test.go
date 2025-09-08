@@ -108,6 +108,7 @@ func TestKeyPair_FromPrivateKeyEd22519(t *testing.T) {
 	keypair, err := KeyPair{}.FromPrivateKey(env, testimonialPrivateKey)
 	if err != nil {
 		t.Error(err)
+		return
 	}
 
 	privateKey, err := keypair.GetPrivateKey()

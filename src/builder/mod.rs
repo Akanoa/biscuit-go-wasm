@@ -1,7 +1,6 @@
-use crate::print;
-use crate::print_wasm;
 use std::mem;
 use std::mem::MaybeUninit;
+use std::ops::{Deref, DerefMut};
 
 mod biscuit_builder;
 mod authorizer_builder;
@@ -10,32 +9,43 @@ pub struct Builder<T> (T);
 
 impl<B> Builder<B> {
 
-    fn chain<F, E>(&mut self, f: F) -> Result<(), E> where F: FnOnce(B) -> Result<B, E> {
+    /// Get the inner builder from the heap and replace it by "zeroed" area
+    /// Execute the closure on the inner builder
+    /// Put back the inner builder at its original place
+    fn apply<F, E>(&mut self, f: F) -> Result<(), E> where F: FnOnce(B) -> Result<B, E> {
 
-        print_wasm!("Dark magic");
+        #[allow(clippy::uninit_assumed_init)]
         let zero = unsafe {MaybeUninit::uninit().assume_init()};
-        print_wasm!("Dark magic 1.5");
+
+        // Take the inner builder and replace it with a zeroed area
         let builder = mem::replace(&mut self.0, zero);
 
-        print_wasm!("Dark magic 2");
-
+        // Execute the closure on the inner builder
         let result = f(builder)?;
-        print_wasm!("Dark magic 3");
+
+        // Put back the inner builder at its original place
         let _zeroed = mem::replace(&mut self.0, result);
-        print_wasm!("Dark magic 4");
 
         Ok(())
-    }
-
-
-    fn apply<F, T, E>(self, f: F) -> Result<T, E> where F: FnOnce(B) -> Result<T, E> {
-
-        f(self.0)
     }
 }
 
 impl<B> From<B> for Builder<B> {
     fn from(value: B) -> Self {
         Builder(value)
+    }
+}
+
+impl<B> Deref for Builder<B> {
+    type Target = B;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<B> DerefMut for Builder<B> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }

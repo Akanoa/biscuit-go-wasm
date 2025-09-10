@@ -1,7 +1,6 @@
 use crate::crypto::SignatureAlgorithm;
-use crate::print;
 use crate::wasm_result::WasmResult;
-use crate::{make_rng, print_wasm, wasm_export};
+use crate::{make_rng, wasm_export};
 use biscuit_auth::{KeyPair, PrivateKey, PublicKey};
 
 // create a new keypair with the given signature algorithm
@@ -56,7 +55,6 @@ wasm_export!(
 // is_ok is 1 because the function never fails
 wasm_export!(
     fn keypair_private_key(keypair: &KeyPair) -> Box<PrivateKey> {
-        print_wasm!("WASM[keypair_private_key]: {:?}", keypair);
         Box::new(keypair.private())
     }
 );

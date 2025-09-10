@@ -50,7 +50,8 @@ wasm_export!(
 // data_len is the length of the error message
 wasm_export!(
     fn authorizer_builder_build(builder: Box<AuthorizerBuilderWrapper>, token: &Biscuit) -> Result<Box<Authorizer>, biscuit_auth::error::Token> {
-        Ok(Box::new(builder.apply(|builder|builder.build(token))?))
+        let authorizer = builder.0.build(token)?;
+        Ok(Box::new(authorizer))
     }
 );
 
@@ -70,6 +71,6 @@ wasm_export!(
 // data_len is the length of the error message
 wasm_export!(
     fn authorizer_builder_add_code(builder: &mut AuthorizerBuilderWrapper, code: &str) -> Result<(), biscuit_auth::error::Token> {
-        builder.chain(|builder|builder.code(code))
+        builder.apply(|builder|builder.code(code))
     }
 );

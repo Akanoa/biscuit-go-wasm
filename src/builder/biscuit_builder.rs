@@ -1,7 +1,6 @@
 use crate::builder::Builder;
-use crate::print;
 use crate::wasm_result::WasmResult;
-use crate::{make_rng, print_wasm, wasm_export};
+use crate::{make_rng, wasm_export};
 use biscuit_auth::datalog::SymbolTable;
 use biscuit_auth::{Biscuit, BiscuitBuilder, KeyPair, PrivateKey};
 
@@ -52,10 +51,7 @@ wasm_export!(
 wasm_export!(
     fn biscuit_builder_build_with_private_key(builder: Box<BiscuitBuilderWrapper>, private_root_key: &PrivateKey) -> Result<Box<Biscuit>, biscuit_auth::error::Token> {
         let root_keypair = KeyPair::from(private_root_key);
-
-        let biscuit = builder.apply(|builder| {
-            builder.build_with_rng(&root_keypair, SymbolTable::default(), &mut make_rng())
-        })?;
+        let biscuit = builder.0.build_with_rng(&root_keypair, SymbolTable::default(), &mut make_rng())?;
 
         Ok(Box::new(biscuit))
     }
@@ -78,11 +74,7 @@ wasm_export!(
 // data_len is the length of the error message in bytes
 wasm_export!(
     fn biscuit_builder_build_with_key_pair(builder: Box<BiscuitBuilderWrapper>, root_keypair: &KeyPair) -> Result<Box<Biscuit>, biscuit_auth::error::Token> {
-        print_wasm!("Wasm : Build Public Key{:?}", root_keypair.public().to_string());
-        print_wasm!("Wasm : Build Private Key{:?}", root_keypair.private().to_prefixed_string());
-        let biscuit = builder.apply(|builder| {
-            builder.build_with_rng(root_keypair, SymbolTable::default(), &mut make_rng())
-        })?;
+        let biscuit = builder.0.build_with_rng(root_keypair, SymbolTable::default(), &mut make_rng())?;
 
         Ok(Box::new(biscuit))
     }
@@ -105,8 +97,7 @@ wasm_export!(
 // data_len is the length of the error message in bytes
 wasm_export!(
     fn biscuit_builder_add_code(builder: &mut BiscuitBuilderWrapper, code: &str) -> Result<(), biscuit_auth::error::Token> {
-        print_wasm!("Wasm : Add Code {:?}", code);
-        builder.chain(|builder|builder.code(code))
+        builder.apply(|builder|builder.code(code))
     }
 );
 
@@ -128,7 +119,7 @@ wasm_export!(
 // data_len is the length of the error message in bytes
 wasm_export!(
     fn biscuit_builder_set_root_key_id(builder: &mut BiscuitBuilderWrapper, root_key_id: u32) {
-        builder.chain(|builder|Ok::<_, biscuit_auth::error::Token>(builder.root_key_id(root_key_id)))
+        builder.apply(|builder|Ok::<_, biscuit_auth::error::Token>(builder.root_key_id(root_key_id)))
     }
 );
 

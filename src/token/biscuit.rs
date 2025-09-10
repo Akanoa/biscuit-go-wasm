@@ -1,6 +1,5 @@
-use crate::print;
 use crate::wasm_result::WasmResult;
-use crate::{print_wasm, wasm_export};
+use crate::wasm_export;
 use biscuit_auth::{Authorizer, Biscuit, BiscuitBuilder, PublicKey};
 
 
@@ -73,12 +72,8 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn biscuit_from_base64(ptr: *const u8, length: u8, root_public_key: &PublicKey) -> Result<Box<Biscuit>,biscuit_auth::error::Token> {
-        print_wasm!("Build Public key{:?}", root_public_key.to_string());
-        let data = unsafe { std::slice::from_raw_parts(ptr, length as usize) };
-
+    fn biscuit_from_base64(data: &str, root_public_key: &PublicKey) -> Result<Box<Biscuit>,biscuit_auth::error::Token> {
         let biscuit = Biscuit::from_base64(data, root_public_key);
-        print_wasm!("{:?}", biscuit);
         let biscuit = biscuit?;
         Ok(Box::new(biscuit))
     }

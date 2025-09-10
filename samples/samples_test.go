@@ -5,6 +5,7 @@ package biscuittest
 
 import (
 	"biscuit-wasm-go/builder"
+	error2 "biscuit-wasm-go/error"
 	"biscuit-wasm-go/keypair"
 	token2 "biscuit-wasm-go/token"
 	"encoding/json"
@@ -37,31 +38,8 @@ type Block struct {
 }
 
 type Result struct {
-	Ok  *int          `json:"Ok"`
-	Err *BiscuitError `json:"Err"`
-}
-
-type BiscuitError struct {
-	FailedLogic *struct {
-		Unauthorized *struct {
-			Policy struct {
-				Allow int `json:"Allow"`
-			} `json:"policy"`
-			Checks []struct {
-				Block struct {
-					BlockID int    `json:"block_id"`
-					CheckID int    `json:"check_id"`
-					Rule    string `json:"rule"`
-				} `json:"Block"`
-			} `json:"checks"`
-		} `json:"Unauthorized"`
-		InvalidBlockRule []any `json:"InvalidBlockRule"`
-	} `json:"FailedLogic"`
-	Format *struct {
-		Signature *struct {
-			InvalidSignature string `json:"InvalidSignature"`
-		} `json:"Signature"`
-	} `json:"Format"`
+	Ok  *int                 `json:"Ok"`
+	Err *error2.BiscuitError `json:"Err"`
 }
 
 type World struct {
@@ -209,20 +187,15 @@ func CompareResult(filename string, token token2.Biscuit, v Validation, t *testi
 	authorizerBuilder, err := builder.AuthorizerBuilder{}.New(env)
 	require.NoError(t, err)
 
-	fmt.Println(v.AuthorizerCode)
-
 	err = authorizerBuilder.AddCode(v.AuthorizerCode)
 	require.NoError(t, err)
 
 	authorizer, err := authorizerBuilder.Build(token)
 
-	fmt.Println(authorizer.ToString())
-
 	if err != nil {
 		CompareError(err, v.Result.Err, t)
 	} else {
 		_, err = authorizer.Authorize()
-		fmt.Println(err)
 		if err != nil {
 			CompareError(err, v.Result.Err, t)
 		} else {
@@ -232,29 +205,19 @@ func CompareResult(filename string, token token2.Biscuit, v Validation, t *testi
 		world, err := authorizer.ToString()
 		require.NoError(t, err)
 
+		fmt.Printf("  World: %s\n", world)
+
 		require.Equal(t, v.World.String(), world,
 			"World mismatch for sample %s", filename,
 		)
 	}
 }
 
-func CompareError(authorizationError error, sampleError *BiscuitError, t *testing.T) {
-	errorString := authorizationError.Error()
-	if sampleError.Format != nil {
-		require.Equal(t, errorString, "biscuit: invalid signature")
-	} else if sampleError.FailedLogic != nil {
-		if sampleError.FailedLogic.Unauthorized != nil {
-			// todo check the block and check ids (if there is a single failed check, because the lib only reports one)
-			require.Regexp(t, "^biscuit: verification failed: failed to verify", errorString)
-		} else if sampleError.FailedLogic.InvalidBlockRule != nil {
-			// todo extract the block number
-			require.Regexp(t, "^biscuit: verification failed: failed to verify", errorString)
-		} else {
-			require.Fail(t, errorString)
-		}
-	} else {
-		fmt.Println(sampleError)
-		require.Fail(t, errorString)
+func CompareError(authorizationError error, sampleError *error2.BiscuitError, t *testing.T) {
+	biscuitAuthorizationError := error2.FromErrorAsBiscuitError(authorizationError)
+
+	if !biscuitAuthorizationError.Equal(*sampleError) {
+		require.Fail(t, "BiscuitErrors are not equal", sampleError.Error(), biscuitAuthorizationError.Error())
 	}
 }
 

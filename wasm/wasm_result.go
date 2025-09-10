@@ -3,8 +3,8 @@
 package wasm
 
 import (
+	error2 "biscuit-wasm-go/error"
 	"encoding/binary"
-	"errors"
 	"fmt"
 )
 
@@ -19,8 +19,41 @@ const wasmResultSize = 12
 type Result struct {
 	data uint32
 	ln   uint32
-	isOk bool
+	kind ResultKind
 	env  WasmEnv
+}
+
+type ResultKind int
+
+const (
+	Ok            ResultKind = 0
+	Biscuit                  = 1
+	Serialization            = 2
+)
+
+func toBisuitError(data []byte, kind ResultKind) error2.BiscuitError {
+
+	if kind == Serialization {
+		return error2.BiscuitError{
+			Raw: string(data),
+		}
+	}
+
+	biscuitError, err := error2.BiscuitError{}.FromString(string(data))
+	if err != nil {
+		return error2.BiscuitError{
+			Raw: string(data),
+		}
+	}
+	return biscuitError
+
+}
+
+func (kind ResultKind) isError() bool {
+	if kind != Ok {
+		return true
+	}
+	return false
 }
 
 // readWasmResult reads the result from the memory.
@@ -33,12 +66,12 @@ func (env WasmEnv) readWasmResult(ptr uint64) (Result, error) {
 
 	dataPtr := binary.LittleEndian.Uint32(buf[0:4])
 	dataLn := binary.LittleEndian.Uint32(buf[4:8])
-	isOk := binary.LittleEndian.Uint32(buf[8:12])
+	kind := binary.LittleEndian.Uint32(buf[8:12])
 
 	return Result{
 		data: dataPtr,
 		ln:   dataLn,
-		isOk: isOk == 1,
+		kind: ResultKind(kind),
 		env:  env,
 	}, nil
 }
@@ -57,7 +90,7 @@ func (result Result) readDataBytes() ([]byte, error) {
 // Return the pointer to the result if the result is Ok.
 // Otherwise, read the memory to get the error message string.
 func (result Result) asPtr() (uint64, error) {
-	if result.isOk {
+	if result.kind == Ok {
 		return uint64(result.data), nil
 	}
 
@@ -66,7 +99,7 @@ func (result Result) asPtr() (uint64, error) {
 		return 0, err
 	}
 
-	return 0, errors.New(string(errString))
+	return 0, toBisuitError(errString, result.kind)
 
 }
 
@@ -74,7 +107,7 @@ func (result Result) asPtr() (uint64, error) {
 // Return the number result if the result is Ok.
 // Otherwise, read the memory to get the error message string.
 func (result Result) asNumber() (uint32, error) {
-	if result.isOk {
+	if result.kind == Ok {
 		return result.data, nil
 	}
 
@@ -83,7 +116,7 @@ func (result Result) asNumber() (uint32, error) {
 		return 0, err
 	}
 
-	return 0, errors.New(string(errString))
+	return 0, toBisuitError(errString, result.kind)
 }
 
 // asString returns the string result or the string error message if the result is an error.
@@ -97,11 +130,11 @@ func (result Result) asString() (string, error) {
 		return "", err
 	}
 
-	if result.isOk {
+	if result.kind == Ok {
 		return string(data), nil
 	}
 
-	return "", errors.New(string(data))
+	return "", toBisuitError(data, result.kind)
 }
 
 // asBytes returns bytes result or the string error message if the result is an error.
@@ -129,11 +162,11 @@ func (result Result) asBytes() ([]byte, error) {
 		return nil, err
 	}
 
-	if result.isOk {
+	if result.kind == Ok {
 		return data, nil
 	}
 
-	return nil, errors.New(string(data))
+	return nil, toBisuitError(data, result.kind)
 }
 
 //---------------- Public functions  ------------------

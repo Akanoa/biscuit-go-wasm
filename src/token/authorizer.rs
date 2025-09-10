@@ -36,12 +36,8 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn authorizer_authorize(authorizer: &mut Authorizer,run_limits: Box<RunLimits>) -> Result<Box<u32>, String> {
-
-        match authorizer.authorize_with_limits(*run_limits) {
-            Ok(index) => Ok(Box::new(index as u32)),
-            Err(e) => Err(serde_json::to_string(&e).expect("error serializing error"))
-        }
+    fn authorizer_authorize(authorizer: &mut Authorizer,run_limits: Box<RunLimits>) -> Result<Box<u32>, biscuit_auth::error::Token> {
+        Ok(Box::new(authorizer.authorize_with_limits(*run_limits)? as u32))
     }
 );
 
@@ -56,7 +52,7 @@ wasm_export!(
 // is_ok is 1 because the function never fails
 wasm_export!(
     fn authorizer_print_world(authorizer: &Authorizer) -> String {
-        authorizer.print_world()
+        authorizer.to_string()
     }
 );
 

@@ -55,8 +55,7 @@ func (authorizer Authorizer) Authorize() (uint32, error) {
 
 	// Return the index of the matched policy
 	matchedPolicy, err := authorizer.env.ResultNumber(returnArea)
-	fmt.Println("matched policy", matchedPolicy)
-	fmt.Println("err", err)
+
 	if err != nil {
 		return 0, err
 	}

@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::mem;
 
 /// Struct to return bytes from a function
@@ -15,7 +16,14 @@ pub struct WasmResult {
     /// Whether the bytes are about data or an error
     /// true: Box<T>
     /// false: String
-    is_ok: bool,
+    kind: ResultKind,
+}
+
+#[repr(C)]
+pub enum ResultKind {
+    Ok = 0,
+    Biscuit = 1,
+    Serialization = 2
 }
 
 /// Trait to data into WasmResult
@@ -26,7 +34,7 @@ impl IntoWasmResult for String {
     fn into_wasm_result(self, ret: &mut WasmResult) {
         ret.ptr = self.as_ptr();
         ret.len = self.len();
-        ret.is_ok = true;
+        ret.kind = ResultKind::Ok;
         // leak the string dropped by the caller
         mem::forget(self);
     }
@@ -36,7 +44,7 @@ impl IntoWasmResult for Vec<u8> {
     fn into_wasm_result(self, ret: &mut WasmResult) {
         ret.ptr = self.as_ptr();
         ret.len = self.len();
-        ret.is_ok = true;
+        ret.kind = ResultKind::Ok;
         // leak the vec dropped by the caller
         mem::forget(self);
     }
@@ -48,7 +56,7 @@ impl<T> IntoWasmResult for Box<T> {
         // T is consumed by the Box creation
         ret.ptr = Box::into_raw(self) as *const u8;
         ret.len = 0;
-        ret.is_ok = true;
+        ret.kind = ResultKind::Ok;
     }
 }
 
@@ -56,11 +64,11 @@ impl IntoWasmResult for () {
     fn into_wasm_result(self, ret: &mut WasmResult) {
         ret.ptr = std::ptr::null();
         ret.len = 0;
-        ret.is_ok = true;
+        ret.kind = ResultKind::Ok;
     }
 }
 
-impl<T: IntoWasmResult, E: ToString> IntoWasmResult for Result<T, E> {
+impl<T: IntoWasmResult, E: Serialize> IntoWasmResult for Result<T, E> {
     fn into_wasm_result(self, ret: &mut WasmResult) {
         match self {
             // Return the data as bytes
@@ -69,10 +77,18 @@ impl<T: IntoWasmResult, E: ToString> IntoWasmResult for Result<T, E> {
             }
             // Return the error as a string
             Err(err) => {
-                let msg = err.to_string();
+                let msg = match serde_json::to_string(&err) {
+                    Ok(msg) => {
+                        ret.kind = ResultKind::Biscuit;
+                        msg
+                    },
+                    Err(serialization_error) => {
+                        ret.kind = ResultKind::Serialization;
+                        serialization_error.to_string()
+                    }
+                };
                 ret.ptr = msg.as_ptr();
                 ret.len = msg.len();
-                ret.is_ok = false;
                 mem::forget(msg);
             }
         }

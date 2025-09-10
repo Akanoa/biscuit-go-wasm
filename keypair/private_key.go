@@ -49,7 +49,6 @@ func (privateKey PrivateKey) FromString(env wasm.WasmEnv, data string) (PrivateK
 	// Call: privatekey_fromString(out_ptr, str_ptr, str_len)
 	_, err = env.Call("private_key_from_hex", returnArea, strPtr, uint64(len(data)))
 	if err != nil {
-		fmt.Println(err)
 		return PrivateKey{}, fmt.Errorf("privatekey_fromString failed: %w", err)
 	}
 

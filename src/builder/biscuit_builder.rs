@@ -1,6 +1,7 @@
 use crate::builder::Builder;
+use crate::print;
 use crate::wasm_result::WasmResult;
-use crate::{make_rng, wasm_export};
+use crate::{make_rng, print_wasm, wasm_export};
 use biscuit_auth::datalog::SymbolTable;
 use biscuit_auth::{Biscuit, BiscuitBuilder, KeyPair, PrivateKey};
 
@@ -51,6 +52,7 @@ wasm_export!(
 wasm_export!(
     fn biscuit_builder_build_with_private_key(builder: Box<BiscuitBuilderWrapper>, private_root_key: &PrivateKey) -> Result<Box<Biscuit>, biscuit_auth::error::Token> {
         let root_keypair = KeyPair::from(private_root_key);
+        print_wasm!("WASM: builder address: {:p}", builder);
         let biscuit = builder.0.build_with_rng(&root_keypair, SymbolTable::default(), &mut make_rng())?;
 
         Ok(Box::new(biscuit))
@@ -110,16 +112,13 @@ wasm_export!(
 // Output:
 // returnArea { data, data_len, is_ok }
 //
-// if is_ok = 1
-// data is a pointer to the biscuit builder allocated in the wasm memory
-// data_len is 0 because of the opaque type
-//
-// if is_ok = 0
-// data is the pointer to the error message allocated in the wasm memory
-// data_len is the length of the error message in bytes
+// is_ok is 1 because the function never fails
+// data is 0 because no data is returned
+// data_len is 0 because no data is returned
 wasm_export!(
-    fn biscuit_builder_set_root_key_id(builder: &mut BiscuitBuilderWrapper, root_key_id: u32) {
-        builder.apply(|builder|Ok::<_, biscuit_auth::error::Token>(builder.root_key_id(root_key_id)))
+    fn biscuit_builder_set_root_key_id(builder: &mut BiscuitBuilderWrapper, root_key_id: u32) -> Result<(), biscuit_auth::error::Token> {
+        builder.apply_no_return(|builder|builder.root_key_id(root_key_id));
+        Ok(())
     }
 );
 
@@ -135,6 +134,8 @@ wasm_export!(
 // is_ok is 1 because the function never fails
 wasm_export!(
     fn biscuit_builder_to_string(builder: &BiscuitBuilderWrapper) -> String {
-        builder.0.to_string()
+        let  x = builder.0.to_string();
+        print_wasm!("WASM: biscuit builder to string: {x}");
+        x
     }
 );

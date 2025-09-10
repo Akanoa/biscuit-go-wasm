@@ -1,5 +1,5 @@
-use crate::wasm_export;
 use crate::wasm_result::WasmResult;
+use crate::wasm_export;
 use biscuit_auth::datalog::RunLimits;
 use biscuit_auth::Authorizer;
 use std::time::Duration;
@@ -36,12 +36,8 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn authorizer_authorize(authorizer: &mut Authorizer,run_limits: Box<RunLimits>) -> Result<Box<u32>, String> {
-
-        match authorizer.authorize_with_limits(*run_limits) {
-            Ok(index) => Ok(Box::new(index as u32)),
-            Err(e) => Err(serde_json::to_string(&e).expect("error serializing error"))
-        }
+    fn authorizer_authorize(authorizer: &mut Authorizer,run_limits: Box<RunLimits>) -> Result<u32, biscuit_auth::error::Token> {
+        Ok(authorizer.authorize_with_limits(*run_limits)? as u32)
     }
 );
 

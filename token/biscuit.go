@@ -47,19 +47,12 @@ func (biscuit Biscuit) FromBase64(env wasm.WasmEnv, biscuitBase64 string, public
 		return Biscuit{}, err
 	}
 
-	fmt.Println(biscuitBase64)
-	fmt.Println(publicKey.Ptr())
-	fmt.Println(len(biscuitBase64))
-
 	// Write the base64 string into wasm memory and pass (ptr, len)
 	strPtr, err := env.WriteBytesToWasm([]byte(biscuitBase64))
 	if err != nil {
 		return Biscuit{}, err
 	}
 	defer env.Free(strPtr, uint64(len(biscuitBase64)))
-
-	fmt.Println(strPtr)
-	fmt.Println(len(biscuitBase64))
 
 	_, err = env.Call("biscuit_from_base64", returnArea, strPtr, uint64(len(biscuitBase64)), publicKey.Ptr())
 	if err != nil {
@@ -69,7 +62,6 @@ func (biscuit Biscuit) FromBase64(env wasm.WasmEnv, biscuitBase64 string, public
 	ptr, err := env.ResultPointer(returnArea)
 
 	if err != nil {
-		fmt.Println(err)
 		return Biscuit{}, err
 	}
 

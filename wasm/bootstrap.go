@@ -39,6 +39,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, compile
 				if !ok {
 					panic("failed to read data")
 				}
+				// print to stdout debug wasm message
 				fmt.Println(string(buf))
 				stack[0] = 0
 
@@ -68,7 +69,7 @@ func InstantiateImportStubs(ctx context.Context, runtime wazero.Runtime, compile
 
 		default:
 			builder.NewFunctionBuilder().WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
-				//fmt.Println(fmt.Sprintf("default import %v", name))
+				// no-op
 			}), params, results).Export(name)
 
 		}

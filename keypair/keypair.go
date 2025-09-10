@@ -85,14 +85,11 @@ func (keypair *KeyPair) GetPrivateKey() (PrivateKey, error) {
 		return PrivateKey{}, err
 	}
 
-	fmt.Println("keypair_private_key")
-	fmt.Println(keypair.ptr)
 	_, err = keypair.env.Call("keypair_private_key", returnArea, keypair.ptr)
 	if err != nil {
 		slog.Error("keypair_getPublicKey failed", slog.Any("err", err))
 		return PrivateKey{}, err
 	}
-	fmt.Println("keypair_private_key done")
 
 	ptr, err := keypair.env.ResultPointer(returnArea)
 	if err != nil {

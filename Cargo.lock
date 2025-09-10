@@ -101,6 +101,7 @@ dependencies = [
  "biscuit-auth",
  "getrandom",
  "rand",
+ "serde",
  "serde_json",
 ]
 

@@ -35,7 +35,7 @@ func (env WasmEnv) Call(name string, params ...uint64) ([]uint64, error) {
 	}
 	data, err := function.Call(env.Ctx, params...)
 	if err != nil {
-		fmt.Println(name, err)
+		slog.Error("failed to call exported function", slog.String("name", name), slog.Any("err", err))
 		return nil, err
 	}
 	return data, nil

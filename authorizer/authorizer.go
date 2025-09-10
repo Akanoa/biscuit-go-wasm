@@ -38,7 +38,8 @@ func (authorizer Authorizer) Authorize() (uint32, error) {
 		return 0, err
 	}
 
-	_, err = authorizer.env.Call("authorizer_run_limits", returnArea, authorizer.ptr)
+	// Run the authorizer with a limit of 100 ms
+	_, err = authorizer.env.Call("authorizer_run_limits", returnArea, 100)
 	if err != nil {
 		return 0, err
 	}
@@ -55,8 +56,7 @@ func (authorizer Authorizer) Authorize() (uint32, error) {
 
 	// Return the index of the matched policy
 	matchedPolicy, err := authorizer.env.ResultNumber(returnArea)
-	fmt.Println("matched policy", matchedPolicy)
-	fmt.Println("err", err)
+
 	if err != nil {
 		return 0, err
 	}

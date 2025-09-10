@@ -28,6 +28,21 @@ impl<B> Builder<B> {
 
         Ok(())
     }
+    
+    fn apply_no_return<F>(&mut self, f: F) where F: FnOnce(B) -> B {
+        #[allow(clippy::uninit_assumed_init)]
+        let zero = unsafe {MaybeUninit::uninit().assume_init()};
+
+        // Take the inner builder and replace it with a zeroed area
+        let builder = mem::replace(&mut self.0, zero);
+
+        // Execute the closure on the inner builder
+        let builder = f(builder);
+
+        // Put back the inner builder at its original place
+        let _zeroed = mem::replace(&mut self.0, builder);
+        
+    }
 }
 
 impl<B> From<B> for Builder<B> {

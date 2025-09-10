@@ -5,7 +5,6 @@ import (
 	keyPairModule "biscuit-wasm-go/keypair"
 	"biscuit-wasm-go/token"
 	"biscuit-wasm-go/wasm"
-	"fmt"
 )
 
 type MakeBiscuitReturn struct {
@@ -26,36 +25,30 @@ func MakeBiscuit(env wasm.WasmEnv, code string) (MakeBiscuitReturn, error) {
 		return MakeBiscuitReturn{}, err
 	}
 
-	fmt.Println("--------------------------------------------")
-
 	err = builder.AddCode(code)
 	if err != nil {
 		return MakeBiscuitReturn{}, err
 	}
-	fmt.Println("--------------------------------------------")
+
+	err = builder.SetRootKeyId(666)
+	if err != nil {
+		return MakeBiscuitReturn{}, err
+	}
 
 	privateKey, err := keypair.GetPrivateKey()
 	if err != nil {
 		return MakeBiscuitReturn{}, err
 	}
 
-	x, err := privateKey.ToString()
-	fmt.Println("Private:", x)
-
 	publicKey, err := keypair.GetPublicKey()
 	if err != nil {
 		return MakeBiscuitReturn{}, err
 	}
 
-	x, err = publicKey.ToString()
-	fmt.Println("Public:", x)
-
 	biscuit, err := builder.Build(privateKey)
 	if err != nil {
 		return MakeBiscuitReturn{}, err
 	}
-
-	fmt.Println("--------------------------------------------")
 
 	return MakeBiscuitReturn{
 		Token:      biscuit,

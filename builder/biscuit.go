@@ -53,6 +53,10 @@ func (builder *BiscuitBuilder) Build(privateKey keypair.PrivateKey) (token.Biscu
 		return token.Biscuit{}, fmt.Errorf("builder not initialized")
 	}
 
+	if privateKey.Ptr() == 0 {
+		return token.Biscuit{}, fmt.Errorf("private key not initialized")
+	}
+
 	returnArea, err := builder.env.GetReturnArea()
 	if err != nil {
 		return token.Biscuit{}, err
@@ -66,6 +70,7 @@ func (builder *BiscuitBuilder) Build(privateKey keypair.PrivateKey) (token.Biscu
 
 	ptr, err := builder.env.ResultPointer(returnArea)
 	if err != nil {
+		return token.Biscuit{}, err
 	}
 
 	return token.Biscuit{}.New(builder.env, ptr), nil

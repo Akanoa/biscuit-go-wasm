@@ -1,12 +1,12 @@
 extern crate alloc;
 extern crate core;
 
-mod wasm_result;
 mod allocation;
-mod wasm_export;
-mod crypto;
 mod builder;
+mod crypto;
 mod token;
+mod wasm_export;
+mod wasm_result;
 
 #[allow(unused)]
 pub(crate) fn make_rng() -> rand::rngs::StdRng {

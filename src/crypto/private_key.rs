@@ -44,7 +44,8 @@ wasm_export!(
 // if is_ok = 0
 // data is the pointer to the error message allocated in the wasm memory
 // data_len is the length of the error message in bytes
-wasm_export!(fn private_key_from_hex(data: &str) -> Result<Box<PrivateKey>, biscuit_auth::error::Format>{
+wasm_export!(
+    fn private_key_from_hex(data: &str) -> Result<Box<PrivateKey>, biscuit_auth::error::Format> {
         Ok(Box::new(PrivateKey::from_str(data)?))
     }
 );

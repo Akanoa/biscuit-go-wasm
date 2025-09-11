@@ -1,4 +1,3 @@
-
 #[macro_export]
 macro_rules! wasm_export {
     (fn $f:ident($($arg_name:ident: $arg_type:ty),* $(,)?) $(-> $ret:ty)? $body:block) => {

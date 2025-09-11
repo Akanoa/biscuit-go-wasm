@@ -31,7 +31,10 @@ wasm_export!(
 // data is the pointer to the error message allocated in the wasm memory
 // data_len is the length of the error message in bytes
 wasm_export!(
-    fn public_key_from_hex(data: &str, algorithm: SignatureAlgorithm) -> Result<Box<PublicKey>, biscuit_auth::error::Format> {
+    fn public_key_from_hex(
+        data: &str,
+        algorithm: SignatureAlgorithm,
+    ) -> Result<Box<PublicKey>, biscuit_auth::error::Format> {
         Ok(Box::new(PublicKey::from_bytes_hex(data, algorithm.into())?))
     }
 );

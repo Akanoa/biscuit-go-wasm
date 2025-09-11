@@ -7,7 +7,6 @@ use biscuit_auth::{Authorizer, AuthorizerBuilder, Biscuit};
 // refcell is used to perform interior mutability (safe because the builder is not exposed to the user)
 pub type AuthorizerBuilderWrapper = Builder<AuthorizerBuilder>;
 
-
 // create a new authorizer builder
 // Output:
 // returnArea { data, data_len=0, is_ok = 1 }
@@ -49,7 +48,10 @@ wasm_export!(
 // data is the pointer to the authorizer error message allocated in the wasm memory
 // data_len is the length of the error message
 wasm_export!(
-    fn authorizer_builder_build(builder: Box<AuthorizerBuilderWrapper>, token: &Biscuit) -> Result<Box<Authorizer>, biscuit_auth::error::Token> {
+    fn authorizer_builder_build(
+        builder: Box<AuthorizerBuilderWrapper>,
+        token: &Biscuit,
+    ) -> Result<Box<Authorizer>, biscuit_auth::error::Token> {
         let authorizer = builder.0.build(token)?;
         Ok(Box::new(authorizer))
     }
@@ -70,7 +72,10 @@ wasm_export!(
 // data is the pointer to the authorizer error message allocated in the wasm memory
 // data_len is the length of the error message
 wasm_export!(
-    fn authorizer_builder_add_code(builder: &mut AuthorizerBuilderWrapper, code: &str) -> Result<(), biscuit_auth::error::Token> {
-        builder.apply(|builder|builder.code(code))
+    fn authorizer_builder_add_code(
+        builder: &mut AuthorizerBuilderWrapper,
+        code: &str,
+    ) -> Result<(), biscuit_auth::error::Token> {
+        builder.apply(|builder| builder.code(code))
     }
 );

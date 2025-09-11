@@ -1,7 +1,6 @@
-use crate::wasm_result::WasmResult;
 use crate::wasm_export;
+use crate::wasm_result::WasmResult;
 use biscuit_auth::{Authorizer, Biscuit, BiscuitBuilder, PublicKey};
-
 
 // create a new biscuit builder
 // Output:
@@ -30,7 +29,9 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn biscuit_authorizer(biscuit: &Biscuit) -> Result<Box<Authorizer>,biscuit_auth::error::Token> {
+    fn biscuit_authorizer(
+        biscuit: &Biscuit,
+    ) -> Result<Box<Authorizer>, biscuit_auth::error::Token> {
         Ok(Box::new(biscuit.authorizer()?))
     }
 );
@@ -51,7 +52,10 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn biscuit_from_bytes(data: &[u8], root_public_key: &PublicKey) -> Result<Box<Biscuit>,biscuit_auth::error::Token> {
+    fn biscuit_from_bytes(
+        data: &[u8],
+        root_public_key: &PublicKey,
+    ) -> Result<Box<Biscuit>, biscuit_auth::error::Token> {
         Ok(Box::new(Biscuit::from(data, root_public_key)?))
     }
 );
@@ -72,7 +76,10 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn biscuit_from_base64(data: &str, root_public_key: &PublicKey) -> Result<Box<Biscuit>,biscuit_auth::error::Token> {
+    fn biscuit_from_base64(
+        data: &str,
+        root_public_key: &PublicKey,
+    ) -> Result<Box<Biscuit>, biscuit_auth::error::Token> {
         let biscuit = Biscuit::from_base64(data, root_public_key);
         let biscuit = biscuit?;
         Ok(Box::new(biscuit))
@@ -108,7 +115,7 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn biscuit_to_base64(biscuit: &Biscuit) -> Result<String,biscuit_auth::error::Token> {
+    fn biscuit_to_base64(biscuit: &Biscuit) -> Result<String, biscuit_auth::error::Token> {
         biscuit.to_base64()
     }
 );
@@ -127,7 +134,7 @@ wasm_export!(
 // data is the pointer to the error message
 // data_len is the length of the error message
 wasm_export!(
-    fn biscuit_to_bytes(biscuit: &Biscuit) -> Result<Vec<u8>,biscuit_auth::error::Token> {
+    fn biscuit_to_bytes(biscuit: &Biscuit) -> Result<Vec<u8>, biscuit_auth::error::Token> {
         biscuit.to_vec()
     }
 );

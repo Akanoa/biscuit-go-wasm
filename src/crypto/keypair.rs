@@ -13,7 +13,10 @@ use biscuit_auth::{KeyPair, PrivateKey, PublicKey};
 // is_ok is 1 because the function never fails
 wasm_export!(
     fn keypair_new(signature_algorithm: SignatureAlgorithm) -> Box<KeyPair> {
-        Box::new(KeyPair::new_with_rng(signature_algorithm.into(), &mut make_rng()))
+        Box::new(KeyPair::new_with_rng(
+            signature_algorithm.into(),
+            &mut make_rng(),
+        ))
     }
 );
 

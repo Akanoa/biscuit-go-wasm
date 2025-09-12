@@ -1,4 +1,5 @@
 /target
 .idea
-toto.dcmp
 *.wat
+rust
+*.dcpm

@@ -5,10 +5,7 @@
 package wasm
 
 import (
-	error2 "biscuit-wasm-go/error"
 	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -22,32 +19,46 @@ import (
 const defaultWasmRelPath = "target/wasm32-unknown-unknown/release/biscuit_wasm_go.wasm"
 
 // WasmEnv wraps a wazero Module and its context, exposing convenience methods to
-// find exports and call them, and to manage the common memory patterns used by
-// wasm-bindgen generated interfaces.
+// find exports and call them
 type WasmEnv struct {
-	Ctx    context.Context
-	Module api.Module
+	Ctx        context.Context
+	Module     api.Module
+	returnArea uint64
 }
 
-func (env WasmEnv) GetFunction(name string) (api.Function, error) {
+// Call calls the specified exported function with the specified parameters.
+func (env WasmEnv) Call(name string, params ...uint64) ([]uint64, error) {
 	function := env.Module.ExportedFunction(name)
 	if function == nil {
 		slog.Error("exported function not found", slog.String("name", name))
 		return nil, fmt.Errorf("exported function '%s' not found", name)
 	}
-	return function, nil
-}
-
-func (env WasmEnv) GetMemory() (api.Memory, error) {
-	memory := env.Module.Memory()
-	if memory == nil {
-		return nil, fmt.Errorf("exported memory '%s' not found", "default")
+	data, err := function.Call(env.Ctx, params...)
+	if err != nil {
+		slog.Error("failed to call exported function", slog.String("name", name), slog.Any("err", err))
+		return nil, err
 	}
-	return memory, nil
+	return data, nil
 }
 
-func (env WasmEnv) Call(function api.Function, params ...uint64) ([]uint64, error) {
-	return function.Call(env.Ctx, params...)
+// GetReturnArea returns the address of 12 bytes allocated memory area.
+// This area is used to deserialize the return value from the WASM function.
+// The area is allocated once and reused for all calls.
+// Warning: This method doesn't ensure that the area hasn't been freed.
+func (env WasmEnv) GetReturnArea() (uint64, error) {
+
+	// If already allocated, return it
+	if env.returnArea != 0 {
+		return env.returnArea, nil
+	}
+
+	// Allocate memory
+	returnArea, err := env.Call("get_return_area")
+	if err != nil {
+		return 0, err
+	}
+
+	return returnArea[0], err
 }
 
 func CloseRuntime(runtime wazero.Runtime, ctx context.Context) {
@@ -63,12 +74,13 @@ func CloseWasmModule(module api.Module, goContext context.Context) {
 	}
 }
 
-// InitWasm loads, compiles and instantiates the Biscuit WASM module using wazero.
+// InitWasm loads, compiles, and instantiates the Biscuit WASM module using wazero.
 // It also installs host import stubs so the module can run without a JS host.
 func InitWasm() (WasmEnv, error) {
 	ctx := context.Background()
 	// Create a new runtime
-	runtime := wazero.NewRuntime(ctx)
+	runtimeConfig := wazero.NewRuntimeConfig().WithMemoryCapacityFromMax(true).WithDebugInfoEnabled(true)
+	runtime := wazero.NewRuntimeWithConfig(ctx, runtimeConfig)
 
 	var sourceWasm []byte
 	var err error
@@ -108,326 +120,50 @@ func InitWasm() (WasmEnv, error) {
 		return WasmEnv{}, err
 	}
 
-	return WasmEnv{
-		Ctx:    ctx,
-		Module: module,
-	}, nil
+	wasmEnv := WasmEnv{
+		Ctx:        ctx,
+		Module:     module,
+		returnArea: 0,
+	}
+
+	return wasmEnv, nil
+
 }
 
-func (env WasmEnv) Free(ptr uint64, length uint64) error {
-	free, err := env.GetFunction("__wbindgen_free")
-	if err != nil {
-		slog.Error("exported function not found", slog.String("name", "__wbindgen_free"))
-		return err
-	}
-	_, err = env.Call(free, ptr, length, 1)
-	return err
-}
+// malloc allocates memory in the WASM memory.
+func (env WasmEnv) malloc(ln uint64) (uint64, error) {
 
-func (env WasmEnv) Malloc(length uint64) (uint64, error) {
-	malloc, err := env.GetFunction("__wbindgen_malloc")
+	dataPtr, err := env.Call("malloc", ln, 1)
 	if err != nil {
-		slog.Error("exported function not found", slog.String("name", "__wbindgen_malloc"))
-		return 0, err
-	}
-	results, err := env.Call(malloc, length, 1)
-	if err != nil {
-		slog.Error("malloc failed", slog.Any("err", err))
 		return 0, err
 	}
 
-	if len(results) != 1 {
-		slog.Error("malloc failed: unexpected return value")
-		return 0, fmt.Errorf("malloc failed: unexpected return value")
-	}
-
-	return results[0], nil
+	return dataPtr[0], nil
 }
 
-// GetStringValueFromPointer string is a double-pointed value. The first pointer is a pointer to the return area,
-// ptr pointed to an 8-byte area with the following layout:
-// 0: 4 bytes: string pointer
-// 4: 4 bytes: string length
-// This second pointer is the actual string data, we read the length and decode the string from memory
-// and free the return area.
-//
-// Memory Layout Diagram:
-// +----------------+     +-------------------+
-// | Return Area    |     | String Data      |
-// | (8 bytes)      |     | (variable length)|
-// +----------------+     +-------------------+
-// | String Ptr   --|---->| Actual string    |
-// | String Length  |     | content...       |
-// +----------------+     +-------------------+
-//
-//	^
-//	|
-//
-// ptr (input parameter)
-func (env WasmEnv) GetStringValueFromPointer(ptr uint64) (string, error) {
+// Free frees memory in the WASM memory.
+func (env WasmEnv) Free(ptr uint64, ln uint64) {
 
-	bytesData, err := env.GetBytesValueFromPointer(ptr)
+	_, err := env.Call("free", ptr, ln, 1)
 	if err != nil {
-		return "", err
+		slog.Error(fmt.Sprintf("failed to free memory at %x", ptr), slog.Any("err", err))
+
 	}
 
-	return string(bytesData), nil
 }
 
-// GetBytesValueFromPointer bytes slice is a double-pointed value. The first pointer is a pointer to the return area,
-// ptr pointed to an 8-byte area with the following layout:
-// 0: 4 bytes: bytes pointer
-// 4: 4 bytes: bytes length
-// This second pointer is the actual bytes data, we read the length and decode the string from memory
-// and free the return area.
-//
-// Memory Layout Diagram:
-// +----------------+     +-------------------+
-// | Return Area    |     | Bytes Data        |
-// | (8 bytes)      |     | (variable length) |
-// +----------------+     +-------------------+
-// | Bytes Ptr    --|---->| Actual bytes    |
-// | Bytes Length   |     | content...       |
-// +----------------+     +-------------------+
-//
-//	^
-//	|
-//
-// ptr (input parameter)
-func (env WasmEnv) GetBytesValueFromPointer(ptr uint64) ([]byte, error) {
+// WriteBytesToWasm write writes data to the WASM memory.
+func (env WasmEnv) WriteBytesToWasm(data []byte) (uint64, error) {
 
-	// read return area
-	mem := env.Module.Memory()
-	buf, ok := mem.Read(uint32(ptr), 8)
-	if !ok {
-		slog.Error("cannot read return area")
-		return nil, fmt.Errorf("cannot read return area")
-	}
-	bytesPtr := binary.LittleEndian.Uint32(buf[0:4])
-	bytesLen := binary.LittleEndian.Uint32(buf[4:8])
-
-	// get bytes from memory
-	bytesData, ok := mem.Read(bytesPtr, bytesLen)
-
-	return bytesData, nil
-}
-
-// GetError retrieves the error associated with a given externref index from the ExternrefTableMirror.
-// It returns a string representation of the error or an empty string if the error cannot be resolved.
-// An error is returned if the provided index is invalid.
-func (env WasmEnv) GetError(idx uint64) (string, error) {
-	if int(idx) >= len(ExternrefTableMirror) {
-		return "", fmt.Errorf("unknown error: invalid externref index %d", idx)
-	}
-
-	v := ExternrefTableMirror[idx]
-	switch data := v.(type) {
-	case nil:
-		return "unknown error", nil
-	case string:
-		return data, nil
-
-	case map[string]interface{}:
-		// Prefer a stable, human-friendly serialization without Go's map[...] prefix
-		// Common shape from wasm-bindgen is nested single-key maps representing error enums, e.g.:
-		// {"FailedLogic": {"NoMatchingPolicy": {"checks": {}}}}
-		// Collapse nested single-key maps into a path like "FailedLogic: NoMatchingPolicy".
-		var parts []string
-		cur := data
-		for {
-			if len(cur) != 1 {
-				break
-			}
-			var k string
-			var v any
-			for kk, vv := range cur {
-				k, v = kk, vv
-			}
-
-			// If the value is a nested error payload, handle known top-level error kinds
-			switch vData := v.(type) {
-			case map[string]interface{}:
-				switch k {
-				case "FailedLogic":
-					return error2.FailedLogicError{Data: vData}.Error(), nil
-				default:
-					// Unknown structured error type; fall through to generic message assembly
-					fmt.Printf("Unknown error type: %s\n", k)
-				}
-			}
-
-			parts = append(parts, k)
-			// descend if the value is another map[string]any
-			next, ok := v.(map[string]any)
-			if !ok {
-				// If value is an empty map[any]any or prints as map[], stop and emit path
-				if fmt.Sprintf("%v", v) == "map[]" {
-					break
-				}
-				// Non-map leaf: include its printable form as final segment and stop
-				if v != nil {
-					parts = append(parts, fmt.Sprintf("%v", v))
-				}
-				break
-			}
-			cur = next
-		}
-
-		if len(parts) > 0 {
-			// Special-case to avoid redundant trailing technical segments like "checks" when empty
-			if len(parts) >= 2 && parts[len(parts)-1] == "checks" {
-				parts = parts[:len(parts)-1]
-			}
-			// Join with ": " for readability
-			msg := parts[0]
-			for i := 1; i < len(parts); i++ {
-				msg += ": " + parts[i]
-			}
-			return msg, nil
-		}
-		// Fallback: stable order by keys
-		keys := make([]string, 0, len(data))
-		for k := range data {
-			keys = append(keys, k)
-		}
-		// simple insertion sort to avoid importing sort
-		for i := 1; i < len(keys); i++ {
-			for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
-				keys[j-1], keys[j] = keys[j], keys[j-1]
-			}
-		}
-		out := ""
-		for i, k := range keys {
-			if i > 0 {
-				out += ", "
-			}
-			out += fmt.Sprintf("%s: %v", k, data[k])
-		}
-
-		return out, nil
-	default:
-		return fmt.Sprintf("%v", v), nil
-	}
-}
-
-// WriteString writes a UTF-8 encoded string to the WebAssembly module's memory and returns a pointer to its location.
-func (env WasmEnv) WriteString(data string) (uint64, error) {
-
-	// Prepare UTF-8 bytes from data
-	bytes := []byte(data)
-
-	return env.WriteBytes(bytes)
-}
-
-// WriteBytes writes a UTF-8 encoded string to the WebAssembly module's memory and returns a pointer to its location.
-func (env WasmEnv) WriteBytes(bytes []byte) (uint64, error) {
-
-	mem := env.Module.Memory()
-
-	// Allocate buffer for string bytes
-	strPtr, err := env.Malloc(uint64(len(bytes)))
+	ptr, err := env.malloc(uint64(len(data)))
 	if err != nil {
-		return 0, fmt.Errorf("malloc for string failed: %w", err)
+		panic(err)
 	}
 
-	// Write bytes into memory
-	if ok := mem.Write(uint32(strPtr), bytes); !ok {
-		_ = env.Free(strPtr, uint64(len(bytes)))
-		return 0, fmt.Errorf("cannot write string bytes to wasm memory")
-	}
-
-	return strPtr, nil
-}
-
-// getArea allocates a new area of the given size in bytes.
-func (env WasmEnv) getArea(size uint64) (uint64, error) {
-	retPtr, err := env.Malloc(size)
-	if err != nil {
-		return 0, fmt.Errorf("malloc for area failed: %w", err)
-	}
-
-	return retPtr, nil
-}
-
-// ReturnAreaSize is the size of the return area used by functions that return
-// Result<T, E> where wasm-bindgen lays out three u32 slots:
-// 0:4 bytes: value pointer (or 0)
-// 4:4 bytes: error externref index (or 0)
-// 8:4 bytes: is_err (0 = Ok, non-zero = Err)
-// Note: Some exports use a compact, 2-slot layout: (ptr_or_err, is_err).
-// For those, use SmallReturnAreaSize and GetResult2.
-const ReturnAreaSize = uint64(16)
-
-// GetReturnArea ReturnAreaSize is the size of the return area in bytes.
-func (env WasmEnv) GetReturnArea() (uint64, error) {
-	// Allocate return area (3 u32 values: value_ptr, error_ptr, is_err)
-	return env.getArea(ReturnAreaSize)
-}
-
-// SmallReturnAreaSize is used by some wasm-bindgen exports that encode
-// Result-like values in 2 u32 slots:
-// 0:4 bytes: value pointer or error externref index
-// 4:4 bytes: is_err (0 = Ok, non-zero = Err)
-const SmallReturnAreaSize = uint64(8)
-
-// GetSmallReturnArea allocates a 2-slot return area (ptr_or_err, is_err).
-func (env WasmEnv) GetSmallReturnArea() (uint64, error) {
-	return env.getArea(SmallReturnAreaSize)
-}
-
-// StringAreaSize is the size of the string area in bytes.
-// 0:4 bytes: string pointer
-// 4:8 bytes: string length
-const StringAreaSize = uint64(8)
-
-// GetStringArea StringAreaSize is the size of the string area in bytes.
-func (env WasmEnv) GetStringArea() (uint64, error) {
-	// Allocate return area (2 u32 values: string_ptr, string_len)
-	return env.getArea(StringAreaSize)
-}
-
-// GetPointee returns the value pointed to by the given pointer.
-// The pointer is expected to point to a return area.
-func (env WasmEnv) GetPointee(ptr uint64) (uint64, error) {
 	mem := env.Module.Memory()
-
-	// Read result triple
-	buf, ok := mem.Read(uint32(ptr), uint32(ReturnAreaSize))
+	ok := mem.Write(uint32(ptr), data)
 	if !ok {
-		return 0, fmt.Errorf("cannot read return area")
+		panic("failed to write data")
 	}
-	valuePtr := binary.LittleEndian.Uint32(buf[0:4])
-	errPtr := binary.LittleEndian.Uint32(buf[4:8])
-	isErr := int32(binary.LittleEndian.Uint32(buf[8:12]))
-
-	if isErr != 0 {
-		serr, err := env.GetError(uint64(errPtr))
-		if err != nil {
-			return 0, fmt.Errorf("cannot get error string: %w", err)
-		}
-		return 0, errors.New(serr)
-	}
-
-	return uint64(valuePtr), nil
-}
-
-// GetResult2 decodes a 2-slot Result area allocated with SmallReturnAreaSize.
-// It returns the value pointer on Ok, or an error constructed from the externref
-// index on Err.
-func (env WasmEnv) GetResult2(ptr uint64) (uint64, error) {
-	mem := env.Module.Memory()
-	buf, ok := mem.Read(uint32(ptr), uint32(SmallReturnAreaSize))
-	if !ok {
-		return 0, fmt.Errorf("cannot read small return area")
-	}
-	ptrOrErr := binary.LittleEndian.Uint32(buf[0:4])
-	isErr := binary.LittleEndian.Uint32(buf[4:8])
-	if isErr != 0 {
-		msg, err := env.GetError(uint64(ptrOrErr))
-		if err != nil {
-			return 0, fmt.Errorf("cannot get error string: %w", err)
-		}
-		return 0, errors.New(msg)
-	}
-	return uint64(ptrOrErr), nil
+	return ptr, nil
 }

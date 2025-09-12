@@ -25,25 +25,25 @@ func (builder AuthorizerBuilder) ToStringWasmFunction() string {
 // New creates a new AuthorizerBuilder using a Wasm environment.
 // Returns the initialized AuthorizerBuilder or an error in case of failure.
 func (builder AuthorizerBuilder) New(env wasm.WasmEnv) (AuthorizerBuilder, error) {
-	function, err := env.GetFunction("authorizerbuilder_new")
+
+	returnArea, err := env.GetReturnArea()
 	if err != nil {
 		return AuthorizerBuilder{}, err
 	}
 
-	ret, err := env.Call(function)
+	_, err = env.Call("authorizer_builder_new", returnArea)
 	if err != nil {
 		slog.Error("authorizerbuilder_new failed", slog.Any("err", err))
 		return AuthorizerBuilder{}, err
 	}
 
-	if len(ret) == 0 {
-		return AuthorizerBuilder{}, fmt.Errorf("no result returned from authorizerbuilder_new")
+	ptr, err := env.ResultPointer(returnArea)
+	if err != nil {
+		return AuthorizerBuilder{}, err
 	}
 
+	builder.ptr = ptr
 	builder.env = env
-	builder.ptr = ret[0]
-
-	fmt.Println("AuthorizerBuilder ptr:", builder.ptr)
 
 	return builder, nil
 }
@@ -54,30 +54,22 @@ func (builder *AuthorizerBuilder) Build(biscuit token.Biscuit) (authorizer.Autho
 		return authorizer.Authorizer{}, fmt.Errorf("builder not initialized")
 	}
 
-	// First try the authenticated build path.
-	function, err := builder.env.GetFunction("authorizerbuilder_buildAuthenticated")
+	returnArea, err := builder.env.GetReturnArea()
 	if err != nil {
 		return authorizer.Authorizer{}, err
 	}
 
-	returnPtr, err := builder.env.GetReturnArea()
-	if err != nil {
-		return authorizer.Authorizer{}, err
-	}
-	defer builder.env.Free(returnPtr, wasm.ReturnAreaSize)
-
-	_, err = builder.env.Call(function, returnPtr, builder.ptr, biscuit.Ptr())
+	_, err = builder.env.Call("authorizer_builder_build", returnArea, builder.ptr, biscuit.Ptr())
 	if err != nil {
 		return authorizer.Authorizer{}, err
 	}
 
-	valuePtr, gErr := builder.env.GetPointee(returnPtr)
-	if gErr != nil {
-		slog.Error("authorizerbuilder_buildAuthenticated failed, unable to get return value", slog.Any("err", gErr))
-		return authorizer.Authorizer{}, gErr
+	ptr, err := builder.env.ResultPointer(returnArea)
+	if err != nil {
+		return authorizer.Authorizer{}, err
 	}
 
-	return authorizer.Authorizer{}.New(builder.env, valuePtr), nil
+	return authorizer.Authorizer{}.New(builder.env, ptr), nil
 }
 
 // AddCode adds the provided code to the AuthorizerBuilder.
@@ -86,34 +78,24 @@ func (builder *AuthorizerBuilder) AddCode(code string) error {
 		return fmt.Errorf("builder builder not initialized")
 	}
 
-	function, err := builder.env.GetFunction("authorizerbuilder_addCode")
+	returnArea, err := builder.env.GetReturnArea()
 	if err != nil {
 		return err
 	}
 
-	strPtr, err := builder.env.WriteString(code)
+	strPtr, err := builder.env.WriteBytesToWasm([]byte(code))
 	if err != nil {
-		return fmt.Errorf("cannot write string to wasm memory: %w", err)
+		return err
 	}
 	defer builder.env.Free(strPtr, uint64(len(code)))
 
-	// authorizerbuilder_addCode returns a 2-slot Result (ptr_or_err, is_err).
-	returnPtr, err := builder.env.GetSmallReturnArea()
-	if err != nil {
-		return err
-	}
-	defer builder.env.Free(returnPtr, wasm.SmallReturnAreaSize)
-
-	_, err = builder.env.Call(function, returnPtr, builder.ptr, strPtr, uint64(len(code)))
+	_, err = builder.env.Call("authorizer_builder_add_code", returnArea, builder.ptr, strPtr, uint64(len(code)))
 	if err != nil {
 		return fmt.Errorf("authorizerbuilder_addCode failed: %w", err)
 	}
 
-	// Inspect the Result in the return area to surface parser errors instead of panicking later.
-	if _, err := builder.env.GetResult2(returnPtr); err != nil {
-		return fmt.Errorf("authorizerbuilder_addCode error: %w", err)
-	}
-	return nil
+	_, err = builder.env.ResultPointer(returnArea)
+	return err
 }
 
 // ToString converts the PublicKey to its string representation using the linked Wasm environment. Returns the string or an error.

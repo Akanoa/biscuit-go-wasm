@@ -12,23 +12,17 @@ func AsString(env wasm.WasmEnv, value Stringable) (string, error) {
 
 	wasmFunction := value.ToStringWasmFunction()
 
-	function, err := env.GetFunction(wasmFunction)
+	returnArea, err := env.GetReturnArea()
 	if err != nil {
 		return "", err
 	}
 
-	resultPtr, err := env.GetStringArea()
-	if err != nil {
-		return "", err
-	}
-	defer env.Free(resultPtr, wasm.StringAreaSize)
-
-	_, err = env.Call(function, resultPtr, value.Ptr())
+	_, err = env.Call(wasmFunction, returnArea, value.Ptr())
 	if err != nil {
 		slog.Error("biscuitbuilder_toString failed", slog.Any("err", err))
 		return "", err
 	}
 
-	return env.GetStringValueFromPointer(resultPtr)
+	return env.ResultString(returnArea)
 
 }
